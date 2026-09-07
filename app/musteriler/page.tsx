@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
@@ -24,7 +24,7 @@ type Customer = {
   created_at: string;
 };
 
-export default function CustomersPage() {
+function CustomersPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -33,7 +33,6 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
-
   const [editingCustomer, setEditingCustomer] =
     useState<Customer | null>(null);
 
@@ -90,13 +89,17 @@ export default function CustomersPage() {
   useEffect(() => {
     const editId = searchParams.get("edit");
 
-    if (!editId || customers.length === 0) return;
+    if (!editId || customers.length === 0) {
+      return;
+    }
 
     const customer = customers.find(
       (item) => item.id === editId
     );
 
-    if (!customer) return;
+    if (!customer) {
+      return;
+    }
 
     setEditingCustomer(customer);
 
@@ -192,27 +195,31 @@ export default function CustomersPage() {
   async function addCustomer(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      return;
+    }
 
     setSaving(true);
 
-    const { error } = await supabase.from("customers").insert({
-      company_name: form.companyName,
-      contact_name: form.contactName,
-      phone: form.phone,
-      email: form.email,
-      city: form.city,
-      district: form.district,
-      address: form.address,
-      postal_code: form.postalCode,
-      tax_number: form.taxNumber,
-      tax_office: form.taxOffice,
-      payment_method: form.paymentMethod,
-      payment_term: Number(form.paymentTerm) || 0,
-      credit_limit: Number(form.creditLimit) || 0,
-      notes: form.notes,
-      customer_type: form.customerType,
-    });
+    const { error } = await supabase
+      .from("customers")
+      .insert({
+        company_name: form.companyName,
+        contact_name: form.contactName,
+        phone: form.phone,
+        email: form.email,
+        city: form.city,
+        district: form.district,
+        address: form.address,
+        postal_code: form.postalCode,
+        tax_number: form.taxNumber,
+        tax_office: form.taxOffice,
+        payment_method: form.paymentMethod,
+        payment_term: Number(form.paymentTerm) || 0,
+        credit_limit: Number(form.creditLimit) || 0,
+        notes: form.notes,
+        customer_type: form.customerType,
+      });
 
     if (error) {
       console.error(error);
@@ -231,9 +238,13 @@ export default function CustomersPage() {
   async function updateCustomer(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!editingCustomer) return;
+    if (!editingCustomer) {
+      return;
+    }
 
-    if (!validateForm()) return;
+    if (!validateForm()) {
+      return;
+    }
 
     setSaving(true);
 
@@ -279,7 +290,9 @@ export default function CustomersPage() {
       "Bu müşteriyi silmek istediğine emin misin?"
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     const { error } = await supabase
       .from("customers")
@@ -300,7 +313,6 @@ export default function CustomersPage() {
   return (
     <main className="min-h-screen bg-gray-50 p-6">
       <div className="mx-auto max-w-7xl">
-
         {/* HEADER */}
         <div className="mb-6 flex items-center justify-between">
           <div>
@@ -326,7 +338,6 @@ export default function CustomersPage() {
 
         {/* İSTATİSTİKLER */}
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-
           <div className="rounded-2xl border border-gray-200 bg-white p-5">
             <p className="text-sm text-gray-500">
               Toplam Müşteri
@@ -356,7 +367,6 @@ export default function CustomersPage() {
               {customers.length}
             </p>
           </div>
-
         </div>
 
         {/* ARAMA */}
@@ -372,17 +382,13 @@ export default function CustomersPage() {
 
         {/* MÜŞTERİ LİSTESİ */}
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-
           {loading ? (
             <div className="p-12 text-center text-gray-500">
               Müşteriler yükleniyor...
             </div>
           ) : filteredCustomers.length === 0 ? (
             <div className="p-12 text-center">
-
-              <div className="text-4xl">
-                👥
-              </div>
+              <div className="text-4xl">👥</div>
 
               <h3 className="mt-4 font-semibold">
                 {search
@@ -395,13 +401,10 @@ export default function CustomersPage() {
                   ? "Farklı bir müşteri adı, yetkili veya telefon deneyebilirsin."
                   : "İlk müşterini ekleyerek başlayabilirsin."}
               </p>
-
             </div>
           ) : (
             <div className="overflow-x-auto">
-
               <table className="w-full text-left text-sm">
-
                 <thead className="border-b bg-gray-50">
                   <tr>
                     <th className="px-6 py-4">
@@ -431,13 +434,11 @@ export default function CustomersPage() {
                 </thead>
 
                 <tbody>
-
                   {filteredCustomers.map((customer) => (
                     <tr
                       key={customer.id}
                       className="border-b last:border-0 hover:bg-gray-50"
                     >
-
                       <td className="px-6 py-4 font-medium">
                         <button
                           onClick={() =>
@@ -472,7 +473,6 @@ export default function CustomersPage() {
 
                       <td className="px-6 py-4">
                         <div className="flex gap-2">
-
                           <button
                             onClick={() => {
                               setEditingCustomer(customer);
@@ -501,9 +501,13 @@ export default function CustomersPage() {
                                 paymentMethod:
                                   customer.payment_method || "",
                                 paymentTerm:
-                                  String(customer.payment_term ?? 0),
+                                  String(
+                                    customer.payment_term ?? 0
+                                  ),
                                 creditLimit:
-                                  String(customer.credit_limit ?? 0),
+                                  String(
+                                    customer.credit_limit ?? 0
+                                  ),
                                 notes:
                                   customer.notes || "",
                                 customerType:
@@ -526,32 +530,22 @@ export default function CustomersPage() {
                           >
                             Sil
                           </button>
-
                         </div>
                       </td>
-
                     </tr>
                   ))}
-
                 </tbody>
-
               </table>
-
             </div>
           )}
-
         </div>
-
       </div>
 
       {/* FORM MODALI */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-
           <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-
             <div className="mb-6 flex items-center justify-between">
-
               <div>
                 <h2 className="text-xl font-bold">
                   {editingCustomer
@@ -573,7 +567,6 @@ export default function CustomersPage() {
               >
                 ×
               </button>
-
             </div>
 
             <form
@@ -584,7 +577,6 @@ export default function CustomersPage() {
               }
               className="grid grid-cols-1 gap-5 md:grid-cols-2"
             >
-
               {/* TEMEL BİLGİLER */}
               <div className="md:col-span-2">
                 <h3 className="border-b pb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
@@ -862,7 +854,6 @@ export default function CustomersPage() {
 
               {/* BUTONLAR */}
               <div className="flex justify-end gap-3 md:col-span-2">
-
                 <button
                   type="button"
                   onClick={() => {
@@ -885,16 +876,27 @@ export default function CustomersPage() {
                       ? "Müşteriyi Güncelle"
                       : "Müşteriyi Kaydet"}
                 </button>
-
               </div>
-
             </form>
-
           </div>
-
         </div>
       )}
-
     </main>
+  );
+}
+
+export default function CustomersPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-gray-50 p-6">
+          <div className="mx-auto max-w-7xl rounded-2xl border border-gray-200 bg-white p-12 text-center text-gray-500">
+            Müşteriler yükleniyor...
+          </div>
+        </main>
+      }
+    >
+      <CustomersPageContent />
+    </Suspense>
   );
 }

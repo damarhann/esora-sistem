@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
@@ -40,7 +40,7 @@ function formatMoney(value: number) {
   }).format(value || 0);
 }
 
-export default function PurchasesPage() {
+function PurchasesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -296,7 +296,11 @@ export default function PurchasesPage() {
       result?.purchase_number;
 
     const total =
-      Number(result?.result_total ?? result?.total ?? totalPurchase);
+      Number(
+        result?.result_total ??
+          result?.total ??
+          totalPurchase
+      );
 
     setSuccess(
       `Alış #${purchaseNumber ?? "-"} başarıyla kaydedildi. Toplam: ${formatMoney(
@@ -767,3 +771,18 @@ export default function PurchasesPage() {
   );
 }
 
+export default function PurchasesPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-slate-50 p-4 md:p-6">
+          <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
+            Alış ekranı yükleniyor...
+          </div>
+        </main>
+      }
+    >
+      <PurchasesPageContent />
+    </Suspense>
+  );
+}
