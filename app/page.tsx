@@ -67,7 +67,10 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   async function handleLogout() {
+    setMobileMenuOpen(false);
     await supabase.auth.signOut();
     router.replace("/giris");
   }
@@ -200,9 +203,132 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-100">
+
+      {/* ===================================================== */}
+      {/* MOBİL MENÜ */}
+      {/* ===================================================== */}
+
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        >
+          <aside
+            className="h-full w-72 max-w-[85vw] overflow-y-auto bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+
+            {/* MOBİL MENÜ BAŞLIK */}
+            <div className="mb-8 flex items-center justify-between">
+
+              <Link
+                href="/"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block max-w-[190px]"
+              >
+                <img
+                  src="/esoralogo.png"
+                  alt="ESORA"
+                  className="block h-auto w-full object-contain"
+                />
+              </Link>
+
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="Menüyü kapat"
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 text-xl text-gray-700 transition hover:bg-gray-200"
+              >
+                ✕
+              </button>
+
+            </div>
+
+            {/* MOBİL NAVİGASYON */}
+            <nav className="space-y-2">
+
+              <MobileMenuItem
+                href="/"
+                icon="📊"
+                text="Genel Bakış"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/musteriler"
+                icon="👥"
+                text="Müşteriler"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/urunler"
+                icon="📦"
+                text="Ürünler"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/siparis-gecmisi"
+                icon="🛒"
+                text="Siparişler"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/cari"
+                icon="💰"
+                text="Cari"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/sevkiyat"
+                icon="🚚"
+                text="Sevkiyat"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/tedarikciler"
+                icon="🏭"
+                text="Tedarikçiler"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+              <MobileMenuItem
+                href="/raporlar"
+                icon="📈"
+                text="Raporlar"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+
+            </nav>
+
+            {/* MOBİL ÇIKIŞ */}
+            <div className="mt-8 border-t border-gray-200 pt-5">
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex w-full items-center gap-3 rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-gray-800"
+              >
+                <span>🚪</span>
+                <span>Çıkış Yap</span>
+              </button>
+
+            </div>
+
+          </aside>
+        </div>
+      )}
+
       <div className="flex min-h-screen">
 
-        {/* SOL MENÜ */}
+        {/* ===================================================== */}
+        {/* SOL MENÜ - MASAÜSTÜ */}
+        {/* ===================================================== */}
+
         <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white p-5 lg:block">
 
           {/* ESORA LOGO */}
@@ -273,10 +399,46 @@ export default function Home() {
           </nav>
         </aside>
 
+        {/* ===================================================== */}
         {/* ANA ALAN */}
-        <section className="flex-1 p-5 md:p-8">
+        {/* ===================================================== */}
 
+        <section className="min-w-0 flex-1 p-4 sm:p-5 md:p-8">
+
+          {/* ===================================================== */}
+          {/* MOBİL ÜST BAR */}
+          {/* ===================================================== */}
+
+          <div className="mb-5 flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-3 shadow-sm lg:hidden">
+
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              aria-label="Menüyü aç"
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-gray-900 text-2xl text-white shadow-sm transition hover:bg-gray-800"
+            >
+              ☰
+            </button>
+
+            <Link
+              href="/"
+              className="block max-w-[150px]"
+            >
+              <img
+                src="/esoralogo.png"
+                alt="ESORA"
+                className="block h-auto w-full object-contain"
+              />
+            </Link>
+
+            <div className="h-11 w-11" />
+
+          </div>
+
+          {/* ===================================================== */}
           {/* BAŞLIK */}
+          {/* ===================================================== */}
+
           <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center">
 
             <div>
@@ -313,7 +475,10 @@ export default function Home() {
 
           </div>
 
+          {/* ===================================================== */}
           {/* HATA */}
+          {/* ===================================================== */}
+
           {error && (
             <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <strong>
@@ -323,7 +488,10 @@ export default function Home() {
             </div>
           )}
 
+          {/* ===================================================== */}
           {/* ÖZET KARTLARI */}
+          {/* ===================================================== */}
+
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-6">
 
             <DashboardCard
@@ -406,7 +574,10 @@ export default function Home() {
 
           </div>
 
+          {/* ===================================================== */}
           {/* ALT ALAN */}
+          {/* ===================================================== */}
+
           <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
 
             {/* SON SİPARİŞLER */}
@@ -608,7 +779,10 @@ export default function Home() {
 
           </div>
 
+          {/* ===================================================== */}
           {/* ALT BİLGİ */}
+          {/* ===================================================== */}
+
           <div className="mt-6 rounded-2xl border border-gray-200 bg-white p-5">
 
             <div className="flex flex-col justify-between gap-2 md:flex-row md:items-center">
@@ -640,6 +814,10 @@ export default function Home() {
   );
 }
 
+/* ========================================================= */
+/* MASAÜSTÜ MENÜ ITEM */
+/* ========================================================= */
+
 function MenuItem({
   href,
   icon,
@@ -665,6 +843,37 @@ function MenuItem({
     </Link>
   );
 }
+
+/* ========================================================= */
+/* MOBİL MENÜ ITEM */
+/* ========================================================= */
+
+function MobileMenuItem({
+  href,
+  icon,
+  text,
+  onClick,
+}: {
+  href: string;
+  icon: string;
+  text: string;
+  onClick: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onClick}
+      className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-100"
+    >
+      <span>{icon}</span>
+      <span>{text}</span>
+    </Link>
+  );
+}
+
+/* ========================================================= */
+/* DASHBOARD CARD */
+/* ========================================================= */
 
 function DashboardCard({
   icon,
@@ -703,6 +912,10 @@ function DashboardCard({
     </div>
   );
 }
+
+/* ========================================================= */
+/* SİPARİŞ DURUMU */
+/* ========================================================= */
 
 function StatusBadge({
   status,
