@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Html5Qrcode } from "html5-qrcode";
 import { supabase } from "../lib/supabase";
 
 type Product = {
@@ -32,6 +33,17 @@ export default function ProductsPage() {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
+  // --------------------------------------------------
+  // BARKOD KAMERA STATE'LERİ
+  // --------------------------------------------------
+
+  const [scanningBarcode, setScanningBarcode] = useState(false);
+  const [scannerReady, setScannerReady] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const processingBarcodeRef = useRef(false);
+
   const [form, setForm] = useState({
     productName: "",
     sku: "",
@@ -44,6 +56,32 @@ export default function ProductsPage() {
 
   useEffect(() => {
     loadProducts();
+  }, []);
+
+  // --------------------------------------------------
+  // COMPONENT KAPANIRKEN KAMERAYI TEMİZLE
+  // --------------------------------------------------
+
+  useEffect(() => {
+    return () => {
+      const scanner = scannerRef.current;
+
+      if (!scanner) {
+        return;
+      }
+
+      scannerRef.current = null;
+      processingBarcodeRef.current = false;
+
+      scanner
+        .stop()
+        .catch(() => {})
+        .finally(() => {
+          try {
+            scanner.clear();
+          } catch {}
+        });
+    };
   }, []);
 
   async function loadProducts() {
@@ -78,7 +116,13 @@ export default function ProductsPage() {
     }));
   }
 
-  function resetForm() {
+  // --------------------------------------------------
+  // YENİ ÜRÜN FORMU RESET
+  // --------------------------------------------------
+
+  async function resetForm() {
+    await stopBarcodeScanner();
+
     setForm({
       productName: "",
       sku: "",
@@ -92,14 +136,19 @@ export default function ProductsPage() {
     setSelectedImage(null);
     setImagePreview(null);
     setEditingId(null);
+
+    setScannerError("");
+    setScannerReady(false);
   }
 
-  function openNewProduct() {
-    resetForm();
+  async function openNewProduct() {
+    await resetForm();
     setShowForm(true);
   }
 
-  function openEditProduct(product: Product) {
+  async function openEditProduct(product: Product) {
+    await stopBarcodeScanner();
+
     setEditingId(product.id);
 
     setForm({
@@ -115,8 +164,290 @@ export default function ProductsPage() {
     setSelectedImage(null);
     setImagePreview(product.image_url || null);
 
+    setScannerError("");
+    setScannerReady(false);
+
     setShowForm(true);
   }
+
+  // --------------------------------------------------
+  // YENİ ÜRÜN - BARKOD KAMERASI
+  // --------------------------------------------------
+
+  async function stopBarcodeScanner() {
+    const scanner = scannerRef.current;
+
+    scannerRef.current = null;
+    processingBarcodeRef.current = false;
+
+    setScanningBarcode(false);
+    setScannerReady(false);
+
+    if (!scanner) {
+      return;
+    }
+
+    try {
+      await scanner.stop();
+    } catch (error) {
+      console.warn(
+        "Barkod kamerası durdurulamadı:",
+        error
+      );
+    }
+
+    try {
+      scanner.clear();
+    } catch (error) {
+      console.warn(
+        "Barkod scanner temizlenemedi:",
+        error
+      );
+    }
+  }
+
+  async function handleNewProductBarcode(
+    decodedText: string
+  ) {
+    if (processingBarcodeRef.current) {
+      return;
+    }
+
+    const cleanBarcode = decodedText.trim();
+
+    if (!cleanBarcode) {
+      return;
+    }
+
+    processingBarcodeRef.current = true;
+
+    try {
+      setForm((prev) => ({
+        ...prev,
+        barcode: cleanBarcode,
+      }));
+
+      await stopBarcodeScanner();
+    } catch (error) {
+      console.error(
+        "Barkod işleme hatası:",
+        error
+      );
+    } finally {
+      processingBarcodeRef.current = false;
+    }
+  }
+
+  async function startBarcodeScanner() {
+    if (
+      scanningBarcode ||
+      scannerRef.current
+    ) {
+      return;
+    }
+
+    setScannerError("");
+    setScannerReady(false);
+    setScanningBarcode(true);
+
+    try {
+      if (
+        typeof window === "undefined" ||
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+      ) {
+        setScanningBarcode(false);
+
+        setScannerError(
+          "Bu cihazda kamera kullanılamıyor. Barkodu elle girebilirsin."
+        );
+
+        return;
+      }
+
+      // Kamera alanının DOM'a eklenmesini bekle
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      const readerElement =
+        document.getElementById(
+          "new-product-barcode-reader"
+        );
+
+      if (!readerElement) {
+        setScanningBarcode(false);
+
+        setScannerError(
+          "Kamera alanı hazırlanamadı. Pencereyi kapatıp tekrar aç."
+        );
+
+        return;
+      }
+
+      // --------------------------------------------------
+      // TELEFONDAKİ KAMERALARI BUL
+      // --------------------------------------------------
+
+      const cameras =
+        await Html5Qrcode.getCameras();
+
+      if (
+        !cameras ||
+        cameras.length === 0
+      ) {
+        setScanningBarcode(false);
+
+        setScannerError(
+          "Telefonda kullanılabilir kamera bulunamadı."
+        );
+
+        return;
+      }
+
+      console.log(
+        "Bulunan kameralar:",
+        cameras
+      );
+
+      // --------------------------------------------------
+      // ARKA KAMERAYI ÖNCELİKLİ SEÇ
+      // --------------------------------------------------
+
+      const backCamera =
+        cameras.find((camera) => {
+          const label =
+            camera.label.toLowerCase();
+
+          return (
+            label.includes("back") ||
+            label.includes("rear") ||
+            label.includes("environment") ||
+            label.includes("arka")
+          );
+        }) ||
+        cameras[cameras.length - 1];
+
+      console.log(
+        "Seçilen kamera:",
+        backCamera
+      );
+
+      // --------------------------------------------------
+      // SCANNER OLUŞTUR
+      // --------------------------------------------------
+
+      const scanner =
+        new Html5Qrcode(
+          "new-product-barcode-reader"
+        );
+
+      scannerRef.current = scanner;
+
+      await scanner.start(
+        backCamera.id,
+        {
+          fps: 10,
+          qrbox: {
+            width: 280,
+            height: 140,
+          },
+          aspectRatio: 1.777778,
+          disableFlip: false,
+        },
+        async (decodedText) => {
+          await handleNewProductBarcode(
+            decodedText
+          );
+        },
+        () => {
+          // Barkod bulunamadığında hata göstermiyoruz.
+        }
+      );
+
+      setScannerReady(true);
+      setScannerError("");
+    } catch (error) {
+      console.error(
+        "Yeni ürün kamera başlatma hatası:",
+        error
+      );
+
+      const scanner =
+        scannerRef.current;
+
+      scannerRef.current = null;
+
+      if (scanner) {
+        try {
+          await scanner.stop();
+        } catch {}
+
+        try {
+          scanner.clear();
+        } catch {}
+      }
+
+      setScanningBarcode(false);
+      setScannerReady(false);
+
+      let message =
+        "Kamera açılamadı. Tarayıcı kamera iznini kontrol et.";
+
+      if (error instanceof Error) {
+        const errorMessage =
+          error.message.toLowerCase();
+
+        if (
+          errorMessage.includes(
+            "permission"
+          ) ||
+          errorMessage.includes(
+            "notallowed"
+          ) ||
+          errorMessage.includes(
+            "denied"
+          )
+        ) {
+          message =
+            "Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamera erişimine izin ver.";
+        } else if (
+          errorMessage.includes(
+            "notfound"
+          ) ||
+          errorMessage.includes(
+            "no camera"
+          )
+        ) {
+          message =
+            "Telefon kamerası bulunamadı veya kullanılamıyor.";
+        } else if (
+          errorMessage.includes(
+            "secure"
+          ) ||
+          errorMessage.includes(
+            "https"
+          )
+        ) {
+          message =
+            "Kamera kullanımı için HTTPS bağlantısı gerekiyor.";
+        } else {
+          message =
+            `Kamera başlatılamadı.\n\n${error.message}`;
+        }
+      }
+
+      setScannerError(message);
+    }
+  }
+
+  // --------------------------------------------------
+  // GÖRSEL
+  // --------------------------------------------------
 
   function handleImageChange(
     e: React.ChangeEvent<HTMLInputElement>
@@ -126,18 +457,24 @@ export default function ProductsPage() {
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
-      alert("Lütfen geçerli bir görsel dosyası seç.");
+      alert(
+        "Lütfen geçerli bir görsel dosyası seç."
+      );
       return;
     }
 
     if (file.size > 10 * 1024 * 1024) {
-      alert("Görsel boyutu en fazla 10 MB olabilir.");
+      alert(
+        "Görsel boyutu en fazla 10 MB olabilir."
+      );
       return;
     }
 
     setSelectedImage(file);
 
-    const previewUrl = URL.createObjectURL(file);
+    const previewUrl =
+      URL.createObjectURL(file);
+
     setImagePreview(previewUrl);
   }
 
@@ -151,30 +488,39 @@ export default function ProductsPage() {
     file: File
   ) {
     const extension =
-      file.name.split(".").pop()?.toLowerCase() || "jpg";
+      file.name
+        .split(".")
+        .pop()
+        ?.toLowerCase() || "jpg";
 
     const filePath = `${productId}/${Date.now()}.${extension}`;
 
-    const { error: uploadError } = await supabase.storage
-      .from("product-images")
-      .upload(filePath, file, {
-        cacheControl: "3600",
-        upsert: false,
-      });
+    const { error: uploadError } =
+      await supabase.storage
+        .from("product-images")
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
 
     if (uploadError) {
       throw uploadError;
     }
 
-    const { data } = supabase.storage
-      .from("product-images")
-      .getPublicUrl(filePath);
+    const { data } =
+      supabase.storage
+        .from("product-images")
+        .getPublicUrl(filePath);
 
     if (!data.publicUrl) {
-      throw new Error("Görsel URL'si oluşturulamadı.");
+      throw new Error(
+        "Görsel URL'si oluşturulamadı."
+      );
     }
 
-    const { error: imageUpdateError } = await supabase.rpc(
+    const {
+      error: imageUpdateError,
+    } = await supabase.rpc(
       "update_product_image",
       {
         p_product_id: productId,
@@ -183,7 +529,6 @@ export default function ProductsPage() {
     );
 
     if (imageUpdateError) {
-      // Veritabanına bağlanamazsa yüklenen dosyayı temizlemeyi dene.
       await supabase.storage
         .from("product-images")
         .remove([filePath]);
@@ -194,15 +539,24 @@ export default function ProductsPage() {
     return data.publicUrl;
   }
 
+  // --------------------------------------------------
+  // ÜRÜN KAYDET
+  // --------------------------------------------------
+
   async function saveProduct() {
     if (!form.productName.trim()) {
       alert("Ürün adı zorunludur.");
       return;
     }
 
-    const purchasePrice = Number(form.purchasePrice || 0);
-    const wholesalePrice = Number(form.wholesalePrice || 0);
-    const retailPrice = Number(form.retailPrice || 0);
+    const purchasePrice =
+      Number(form.purchasePrice || 0);
+
+    const wholesalePrice =
+      Number(form.wholesalePrice || 0);
+
+    const retailPrice =
+      Number(form.retailPrice || 0);
 
     if (purchasePrice < 0) {
       alert("Alış fiyatı negatif olamaz.");
@@ -210,12 +564,16 @@ export default function ProductsPage() {
     }
 
     if (wholesalePrice < 0) {
-      alert("Toptan satış fiyatı negatif olamaz.");
+      alert(
+        "Toptan satış fiyatı negatif olamaz."
+      );
       return;
     }
 
     if (retailPrice < 0) {
-      alert("Satış fiyatı negatif olamaz.");
+      alert(
+        "Satış fiyatı negatif olamaz."
+      );
       return;
     }
 
@@ -225,28 +583,50 @@ export default function ProductsPage() {
     let error = null;
 
     if (editingId) {
-      const result = await supabase.rpc("update_product", {
-        p_product_id: editingId,
-        p_product_name: form.productName.trim(),
-        p_sku: form.sku.trim() || null,
-        p_barcode: form.barcode.trim() || null,
-        p_category: form.category.trim() || null,
-        p_purchase_price: purchasePrice,
-        p_wholesale_price: wholesalePrice,
-        p_retail_price: retailPrice,
-      });
+      const result =
+        await supabase.rpc(
+          "update_product",
+          {
+            p_product_id: editingId,
+            p_product_name:
+              form.productName.trim(),
+            p_sku:
+              form.sku.trim() || null,
+            p_barcode:
+              form.barcode.trim() || null,
+            p_category:
+              form.category.trim() || null,
+            p_purchase_price:
+              purchasePrice,
+            p_wholesale_price:
+              wholesalePrice,
+            p_retail_price:
+              retailPrice,
+          }
+        );
 
       error = result.error;
     } else {
-      const result = await supabase.rpc("create_product", {
-        p_product_name: form.productName.trim(),
-        p_sku: form.sku.trim() || null,
-        p_barcode: form.barcode.trim() || null,
-        p_category: form.category.trim() || null,
-        p_purchase_price: purchasePrice,
-        p_wholesale_price: wholesalePrice,
-        p_retail_price: retailPrice,
-      });
+      const result =
+        await supabase.rpc(
+          "create_product",
+          {
+            p_product_name:
+              form.productName.trim(),
+            p_sku:
+              form.sku.trim() || null,
+            p_barcode:
+              form.barcode.trim() || null,
+            p_category:
+              form.category.trim() || null,
+            p_purchase_price:
+              purchasePrice,
+            p_wholesale_price:
+              wholesalePrice,
+            p_retail_price:
+              retailPrice,
+          }
+        );
 
       error = result.error;
       productId = result.data;
@@ -255,32 +635,44 @@ export default function ProductsPage() {
     if (error) {
       console.error(error);
 
-      alert(error.message || "Ürün kaydedilemedi.");
+      alert(
+        error.message ||
+          "Ürün kaydedilemedi."
+      );
 
       setSaving(false);
       return;
     }
 
     // Görsel seçilmişse yükle
-    if (selectedImage && productId) {
+    if (
+      selectedImage &&
+      productId
+    ) {
       try {
-        await uploadProductImage(productId, selectedImage);
+        await uploadProductImage(
+          productId,
+          selectedImage
+        );
       } catch (imageError: any) {
         console.error(imageError);
 
         alert(
           `Ürün bilgileri kaydedildi ancak görsel yüklenemedi.\n\n${
-            imageError?.message || "Görsel yükleme hatası."
+            imageError?.message ||
+            "Görsel yükleme hatası."
           }`
         );
       }
     }
 
-    const wasCreating = !editingId;
+    const wasCreating =
+      !editingId;
 
     setSaving(false);
     setShowForm(false);
-    resetForm();
+
+    await resetForm();
 
     await loadProducts();
 
@@ -289,29 +681,40 @@ export default function ProductsPage() {
         "Ürün başarıyla oluşturuldu.\n\nİlk stok miktarını Stok Yönetimi sayfasından girebilirsin."
       );
     } else {
-      alert("Ürün başarıyla güncellendi.");
+      alert(
+        "Ürün başarıyla güncellendi."
+      );
     }
   }
 
-  async function deactivateProduct(product: Product) {
-    const confirmed = window.confirm(
-      `"${product.product_name}" ürününü pasife almak istediğine emin misin?\n\nÜrün silinmeyecek. Sipariş ve stok geçmişi korunacaktır.`
-    );
+  // --------------------------------------------------
+  // PASİFE AL
+  // --------------------------------------------------
+
+  async function deactivateProduct(
+    product: Product
+  ) {
+    const confirmed =
+      window.confirm(
+        `"${product.product_name}" ürününü pasife almak istediğine emin misin?\n\nÜrün silinmeyecek. Sipariş ve stok geçmişi korunacaktır.`
+      );
 
     if (!confirmed) return;
 
-    const { error } = await supabase.rpc(
-      "deactivate_product",
-      {
-        p_product_id: product.id,
-      }
-    );
+    const { error } =
+      await supabase.rpc(
+        "deactivate_product",
+        {
+          p_product_id: product.id,
+        }
+      );
 
     if (error) {
       console.error(error);
 
       alert(
-        error.message || "Ürün pasife alınamadı."
+        error.message ||
+          "Ürün pasife alınamadı."
       );
 
       return;
@@ -320,35 +723,59 @@ export default function ProductsPage() {
     await loadProducts();
   }
 
-  function formatPrice(value: number | null) {
-    return Number(value || 0).toLocaleString("tr-TR", {
+  // --------------------------------------------------
+  // FORMAT
+  // --------------------------------------------------
+
+  function formatPrice(
+    value: number | null
+  ) {
+    return Number(
+      value || 0
+    ).toLocaleString("tr-TR", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
   }
 
-  function formatStock(value: number | null) {
-    return Number(value || 0).toLocaleString("tr-TR", {
+  function formatStock(
+    value: number | null
+  ) {
+    return Number(
+      value || 0
+    ).toLocaleString("tr-TR", {
       maximumFractionDigits: 2,
     });
   }
 
-  const filteredProducts = products.filter((product) => {
-    const text = search.toLocaleLowerCase("tr-TR");
+  const filteredProducts =
+    products.filter((product) => {
+      const text =
+        search.toLocaleLowerCase(
+          "tr-TR"
+        );
 
-    return (
-      product.product_name
-        ?.toLocaleLowerCase("tr-TR")
-        .includes(text) ||
-      product.sku
-        ?.toLocaleLowerCase("tr-TR")
-        .includes(text) ||
-      product.barcode?.includes(search) ||
-      product.category
-        ?.toLocaleLowerCase("tr-TR")
-        .includes(text)
-    );
-  });
+      return (
+        product.product_name
+          ?.toLocaleLowerCase(
+            "tr-TR"
+          )
+          .includes(text) ||
+        product.sku
+          ?.toLocaleLowerCase(
+            "tr-TR"
+          )
+          .includes(text) ||
+        product.barcode?.includes(
+          search
+        ) ||
+        product.category
+          ?.toLocaleLowerCase(
+            "tr-TR"
+          )
+          .includes(text)
+      );
+    });
 
   return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -408,7 +835,9 @@ export default function ProductsPage() {
 
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) =>
+              setSearch(e.target.value)
+            }
             placeholder="Ürün adı, SKU, barkod veya kategori ara..."
             className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-400"
           />
@@ -500,123 +929,163 @@ export default function ProductsPage() {
 
                 <tbody className="divide-y divide-slate-100">
 
-                  {filteredProducts.map((product) => (
+                  {filteredProducts.map(
+                    (product) => (
 
-                    <tr
-                      key={product.id}
-                      className="hover:bg-slate-50"
-                    >
+                      <tr
+                        key={product.id}
+                        className="hover:bg-slate-50"
+                      >
 
-                      {/* ÜRÜN + GÖRSEL */}
-                      <td className="px-6 py-4">
+                        {/* ÜRÜN + GÖRSEL */}
+                        <td className="px-6 py-4">
 
-                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3">
 
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                            <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
 
-                            {product.image_url ? (
-                              <img
-                                src={product.image_url}
-                                alt={product.product_name}
-                                className="h-full w-full object-contain"
-                              />
-                            ) : (
-                              <span className="text-xl text-slate-300">
-                                📷
-                              </span>
-                            )}
+                              {product.image_url ? (
+                                <img
+                                  src={
+                                    product.image_url
+                                  }
+                                  alt={
+                                    product.product_name
+                                  }
+                                  className="h-full w-full object-contain"
+                                />
+                              ) : (
+                                <span className="text-xl text-slate-300">
+                                  📷
+                                </span>
+                              )}
 
-                          </div>
+                            </div>
 
-                          <div>
-                            <p className="font-semibold text-slate-900">
-                              {product.product_name}
-                            </p>
-
-                            {product.unit && (
-                              <p className="mt-1 text-xs text-slate-400">
-                                Birim: {product.unit}
+                            <div>
+                              <p className="font-semibold text-slate-900">
+                                {
+                                  product.product_name
+                                }
                               </p>
-                            )}
+
+                              {product.unit && (
+                                <p className="mt-1 text-xs text-slate-400">
+                                  Birim:{" "}
+                                  {
+                                    product.unit
+                                  }
+                                </p>
+                              )}
+                            </div>
+
                           </div>
 
-                        </div>
+                        </td>
 
-                      </td>
+                        {/* SKU */}
+                        <td className="px-6 py-4 font-mono text-sm text-slate-600">
+                          {product.sku ||
+                            "-"}
+                        </td>
 
-                      {/* SKU */}
-                      <td className="px-6 py-4 font-mono text-sm text-slate-600">
-                        {product.sku || "-"}
-                      </td>
+                        {/* BARKOD */}
+                        <td className="px-6 py-4 font-mono text-sm text-slate-600">
+                          {product.barcode ||
+                            "-"}
+                        </td>
 
-                      {/* BARKOD */}
-                      <td className="px-6 py-4 font-mono text-sm text-slate-600">
-                        {product.barcode || "-"}
-                      </td>
+                        {/* KATEGORİ */}
+                        <td className="px-6 py-4 text-sm text-slate-600">
+                          {product.category ||
+                            "-"}
+                        </td>
 
-                      {/* KATEGORİ */}
-                      <td className="px-6 py-4 text-sm text-slate-600">
-                        {product.category || "-"}
-                      </td>
+                        {/* ALIŞ */}
+                        <td className="px-6 py-4 text-right text-sm text-slate-600">
+                          {
+                            formatPrice(
+                              product.purchase_price
+                            )
+                          }{" "}
+                          ₺
+                        </td>
 
-                      {/* ALIŞ */}
-                      <td className="px-6 py-4 text-right text-sm text-slate-600">
-                        {formatPrice(product.purchase_price)} ₺
-                      </td>
+                        {/* TOPTAN */}
+                        <td className="px-6 py-4 text-right text-sm font-semibold text-blue-700">
+                          {
+                            formatPrice(
+                              product.wholesale_price
+                            )
+                          }{" "}
+                          ₺
+                        </td>
 
-                      {/* TOPTAN */}
-                      <td className="px-6 py-4 text-right text-sm font-semibold text-blue-700">
-                        {formatPrice(product.wholesale_price)} ₺
-                      </td>
+                        {/* SATIŞ */}
+                        <td className="px-6 py-4 text-right text-sm font-semibold text-slate-900">
+                          {
+                            formatPrice(
+                              product.retail_price
+                            )
+                          }{" "}
+                          ₺
+                        </td>
 
-                      {/* SATIŞ */}
-                      <td className="px-6 py-4 text-right text-sm font-semibold text-slate-900">
-                        {formatPrice(product.retail_price)} ₺
-                      </td>
+                        {/* STOK */}
+                        <td className="px-6 py-4 text-right">
 
-                      {/* STOK */}
-                      <td className="px-6 py-4 text-right">
-
-                        <Link
-                          href="/stok"
-                          className="inline-flex rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
-                        >
-                          {formatStock(product.stock)}{" "}
-                          {product.unit || "Adet"}
-                        </Link>
-
-                      </td>
-
-                      {/* İŞLEM */}
-                      <td className="px-6 py-4">
-
-                        <div className="flex justify-end gap-2">
-
-                          <button
-                            onClick={() =>
-                              openEditProduct(product)
-                            }
-                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                          <Link
+                            href="/stok"
+                            className="inline-flex rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-100"
                           >
-                            Düzenle
-                          </button>
-
-                          <button
-                            onClick={() =>
-                              deactivateProduct(product)
+                            {
+                              formatStock(
+                                product.stock
+                              )
+                            }{" "}
+                            {
+                              product.unit ||
+                              "Adet"
                             }
-                            className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                          >
-                            Pasife Al
-                          </button>
+                          </Link>
 
-                        </div>
+                        </td>
 
-                      </td>
+                        {/* İŞLEM */}
+                        <td className="px-6 py-4">
 
-                    </tr>
+                          <div className="flex justify-end gap-2">
 
-                  ))}
+                            <button
+                              onClick={() =>
+                                openEditProduct(
+                                  product
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                            >
+                              Düzenle
+                            </button>
+
+                            <button
+                              onClick={() =>
+                                deactivateProduct(
+                                  product
+                                )
+                              }
+                              className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                            >
+                              Pasife Al
+                            </button>
+
+                          </div>
+
+                        </td>
+
+                      </tr>
+
+                    )
+                  )}
 
                 </tbody>
 
@@ -652,9 +1121,9 @@ export default function ProductsPage() {
                 </div>
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     setShowForm(false);
-                    resetForm();
+                    await resetForm();
                   }}
                   className="text-2xl text-slate-400 hover:text-slate-700"
                 >
@@ -678,7 +1147,9 @@ export default function ProductsPage() {
 
                       {imagePreview ? (
                         <img
-                          src={imagePreview}
+                          src={
+                            imagePreview
+                          }
                           alt="Ürün önizleme"
                           className="h-full w-full object-contain"
                         />
@@ -687,6 +1158,7 @@ export default function ProductsPage() {
                           <div className="text-3xl">
                             📷
                           </div>
+
                           <p className="mt-1 text-xs text-slate-400">
                             Görsel yok
                           </p>
@@ -704,7 +1176,9 @@ export default function ProductsPage() {
                         <input
                           type="file"
                           accept="image/*"
-                          onChange={handleImageChange}
+                          onChange={
+                            handleImageChange
+                          }
                           className="hidden"
                         />
 
@@ -724,7 +1198,9 @@ export default function ProductsPage() {
                       {imagePreview && (
                         <button
                           type="button"
-                          onClick={removeSelectedImage}
+                          onClick={
+                            removeSelectedImage
+                          }
                           className="mt-2 text-xs font-medium text-red-500 hover:underline"
                         >
                           Görseli kaldır
@@ -746,8 +1222,12 @@ export default function ProductsPage() {
 
                   <input
                     name="productName"
-                    value={form.productName}
-                    onChange={handleChange}
+                    value={
+                      form.productName
+                    }
+                    onChange={
+                      handleChange
+                    }
                     placeholder="Örn: ESORA Krom Mix Eviye Bataryası"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-400"
                   />
@@ -757,6 +1237,7 @@ export default function ProductsPage() {
                 {/* SKU + BARKOD */}
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
 
+                  {/* SKU */}
                   <div>
 
                     <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -765,8 +1246,12 @@ export default function ProductsPage() {
 
                     <input
                       name="sku"
-                      value={form.sku}
-                      onChange={handleChange}
+                      value={
+                        form.sku
+                      }
+                      onChange={
+                        handleChange
+                      }
                       placeholder="Örn: ES-BAT-001"
                       className="w-full rounded-xl border border-slate-200 px-4 py-3 font-mono outline-none focus:border-slate-400"
                     />
@@ -777,24 +1262,128 @@ export default function ProductsPage() {
 
                   </div>
 
+                  {/* BARKOD */}
                   <div>
 
                     <label className="mb-1 block text-sm font-medium text-slate-700">
                       Barkod
                     </label>
 
-                    <input
-                      name="barcode"
-                      value={form.barcode}
-                      onChange={handleChange}
-                      inputMode="numeric"
-                      placeholder="Örn: 8691234567890"
-                      className="w-full rounded-xl border border-slate-200 px-4 py-3 font-mono outline-none focus:border-slate-400"
-                    />
+                    <div className="flex gap-2">
+
+                      <input
+                        name="barcode"
+                        value={
+                          form.barcode
+                        }
+                        onChange={
+                          handleChange
+                        }
+                        inputMode="numeric"
+                        placeholder="Örn: 8691234567890"
+                        className="min-w-0 flex-1 rounded-xl border border-slate-200 px-4 py-3 font-mono outline-none focus:border-slate-400"
+                      />
+
+                      {!scanningBarcode ? (
+                        <button
+                          type="button"
+                          onClick={
+                            startBarcodeScanner
+                          }
+                          className="shrink-0 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+                        >
+                          📷 Tara
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={
+                            stopBarcodeScanner
+                          }
+                          className="shrink-0 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 hover:bg-red-100"
+                        >
+                          Kapat
+                        </button>
+                      )}
+
+                    </div>
+
+                    <p className="mt-1 text-xs text-slate-400">
+                      Barkodu elle girebilir veya kamerayla okutabilirsin.
+                    </p>
 
                   </div>
 
                 </div>
+
+                {/* BARKOD KAMERA */}
+                {scanningBarcode && (
+
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-black">
+
+                    <div className="relative min-h-[280px] w-full">
+
+                      <div
+                        id="new-product-barcode-reader"
+                        className="min-h-[280px] w-full"
+                      />
+
+                      {!scannerReady && (
+
+                        <div className="absolute inset-0 flex items-center justify-center bg-black text-center text-white">
+
+                          <div>
+
+                            <div className="text-4xl">
+                              📷
+                            </div>
+
+                            <p className="mt-3 font-semibold">
+                              Kamera açılıyor...
+                            </p>
+
+                            <p className="mt-1 text-sm text-slate-300">
+                              Lütfen kamera iznini onayla.
+                            </p>
+
+                          </div>
+
+                        </div>
+
+                      )}
+
+                      {scannerReady && (
+
+                        <>
+
+                          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+
+                            <div className="h-32 w-72 rounded-xl border-2 border-white shadow-lg" />
+
+                          </div>
+
+                          <div className="absolute bottom-4 left-0 right-0 text-center text-sm font-semibold text-white">
+                            Barkodu çerçevenin içine getir
+                          </div>
+
+                        </>
+
+                      )}
+
+                    </div>
+
+                  </div>
+
+                )}
+
+                {/* KAMERA HATASI */}
+                {scannerError && (
+
+                  <div className="mt-3 whitespace-pre-line rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                    {scannerError}
+                  </div>
+
+                )}
 
                 {/* KATEGORİ */}
                 <div>
@@ -805,8 +1394,12 @@ export default function ProductsPage() {
 
                   <input
                     name="category"
-                    value={form.category}
-                    onChange={handleChange}
+                    value={
+                      form.category
+                    }
+                    onChange={
+                      handleChange
+                    }
                     placeholder="Örn: Bataryalar"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-slate-400"
                   />
@@ -833,8 +1426,12 @@ export default function ProductsPage() {
 
                         <input
                           name="purchasePrice"
-                          value={form.purchasePrice}
-                          onChange={handleChange}
+                          value={
+                            form.purchasePrice
+                          }
+                          onChange={
+                            handleChange
+                          }
                           type="number"
                           min="0"
                           step="0.01"
@@ -860,8 +1457,12 @@ export default function ProductsPage() {
 
                         <input
                           name="wholesalePrice"
-                          value={form.wholesalePrice}
-                          onChange={handleChange}
+                          value={
+                            form.wholesalePrice
+                          }
+                          onChange={
+                            handleChange
+                          }
                           type="number"
                           min="0"
                           step="0.01"
@@ -887,8 +1488,12 @@ export default function ProductsPage() {
 
                         <input
                           name="retailPrice"
-                          value={form.retailPrice}
-                          onChange={handleChange}
+                          value={
+                            form.retailPrice
+                          }
+                          onChange={
+                            handleChange
+                          }
                           type="number"
                           min="0"
                           step="0.01"
@@ -937,9 +1542,9 @@ export default function ProductsPage() {
               <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">
 
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     setShowForm(false);
-                    resetForm();
+                    await resetForm();
                   }}
                   disabled={saving}
                   className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
@@ -948,7 +1553,9 @@ export default function ProductsPage() {
                 </button>
 
                 <button
-                  onClick={saveProduct}
+                  onClick={
+                    saveProduct
+                  }
                   disabled={saving}
                   className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
                 >
@@ -971,3 +1578,4 @@ export default function ProductsPage() {
     </div>
   );
 }
+
