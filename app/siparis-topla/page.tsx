@@ -46,14 +46,12 @@ export default function SiparisToplaPage() {
   const [search, setSearch] = useState("");
   const [loadingProduct, setLoadingProduct] = useState(false);
 
-  // Müşteri
   const [customerSearch, setCustomerSearch] = useState("");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] =
     useState<Customer | null>(null);
   const [loadingCustomers, setLoadingCustomers] = useState(false);
 
-  // Sipariş kaydı
   const [savingOrder, setSavingOrder] = useState(false);
   const [savedOrderNumber, setSavedOrderNumber] =
     useState<number | null>(null);
@@ -62,6 +60,10 @@ export default function SiparisToplaPage() {
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const processingScanRef = useRef(false);
+
+  // --------------------------------------------------
+  // FİYAT FORMATLAMA
+  // --------------------------------------------------
 
   function formatPrice(value: number | null) {
     return Number(value || 0).toLocaleString("tr-TR", {
@@ -77,7 +79,9 @@ export default function SiparisToplaPage() {
   async function findProductByBarcode(value: string) {
     const cleanBarcode = value.trim();
 
-    if (!cleanBarcode) return;
+    if (!cleanBarcode) {
+      return;
+    }
 
     setLoadingProduct(true);
 
@@ -108,6 +112,10 @@ export default function SiparisToplaPage() {
     addToCart(data);
     setBarcode("");
   }
+
+  // --------------------------------------------------
+  // SEPETE ÜRÜN EKLE
+  // --------------------------------------------------
 
   function addToCart(product: Product) {
     const wholesalePrice = Number(product.wholesale_price || 0);
@@ -146,8 +154,15 @@ export default function SiparisToplaPage() {
     });
   }
 
-  function updateQuantity(productId: string, quantity: number) {
-    if (quantity <= 0) {
+  // --------------------------------------------------
+  // MİKTAR
+  // --------------------------------------------------
+
+  function updateQuantity(
+    productId: string,
+    quantity: number
+  ) {
+    if (quantity <= 0 || Number.isNaN(quantity)) {
       removeFromCart(productId);
       return;
     }
@@ -164,6 +179,10 @@ export default function SiparisToplaPage() {
     );
   }
 
+  // --------------------------------------------------
+  // ÜRÜN SİL
+  // --------------------------------------------------
+
   function removeFromCart(productId: string) {
     setCart((currentCart) =>
       currentCart.filter(
@@ -172,8 +191,14 @@ export default function SiparisToplaPage() {
     );
   }
 
+  // --------------------------------------------------
+  // SEPETİ TEMİZLE
+  // --------------------------------------------------
+
   function clearCart() {
-    if (cart.length === 0) return;
+    if (cart.length === 0) {
+      return;
+    }
 
     const confirmed = window.confirm(
       "Siparişteki tüm ürünler kaldırılacak. Emin misin?"
@@ -185,39 +210,48 @@ export default function SiparisToplaPage() {
   }
 
   // --------------------------------------------------
-  // KAMERA / BARKOD TARAMA
+  // KAMERA DURDUR
   // --------------------------------------------------
 
   async function stopScanner() {
-    try {
-      if (scannerRef.current) {
-        const state = scannerRef.current.getState();
+    const scanner = scannerRef.current;
 
-        if (state === 2) {
-          await scannerRef.current.stop();
-        }
-
-        scannerRef.current.clear();
-        scannerRef.current = null;
-      }
-    } catch (error) {
-      console.error("Scanner kapatma hatası:", error);
-
-      try {
-        scannerRef.current?.clear();
-      } catch {
-        // Temizleme hatası göz ardı edilir.
-      }
-
-      scannerRef.current = null;
-    }
-
+    scannerRef.current = null;
     processingScanRef.current = false;
+
     setScanning(false);
     setScannerReady(false);
+
+    if (!scanner) {
+      return;
+    }
+
+    try {
+      await scanner.stop();
+    } catch (error) {
+      console.warn(
+        "Scanner durdurma uyarısı:",
+        error
+      );
+    }
+
+    try {
+      scanner.clear();
+    } catch (error) {
+      console.warn(
+        "Scanner temizleme uyarısı:",
+        error
+      );
+    }
   }
 
-  async function handleScanSuccess(decodedText: string) {
+  // --------------------------------------------------
+  // BARKOD OKUMA BAŞARILI
+  // --------------------------------------------------
+
+  async function handleScanSuccess(
+    decodedText: string
+  ) {
     if (processingScanRef.current) {
       return;
     }
@@ -236,18 +270,28 @@ export default function SiparisToplaPage() {
       await stopScanner();
 
       await findProductByBarcode(cleanBarcode);
+    } catch (error) {
+      console.error(
+        "Barkod işleme hatası:",
+        error
+      );
     } finally {
       processingScanRef.current = false;
     }
   }
 
+  // --------------------------------------------------
+  // KAMERA BAŞLAT
+  // --------------------------------------------------
+
   async function startScanner() {
-    if (scanning) {
+    if (scanning || scannerRef.current) {
       return;
     }
 
     setCameraError("");
     setScannerReady(false);
+    setScanning(true);
 
     try {
       if (
@@ -255,29 +299,37 @@ export default function SiparisToplaPage() {
         !navigator.mediaDevices ||
         !navigator.mediaDevices.getUserMedia
       ) {
+        setScanning(false);
+
         setCameraError(
-          "Bu cihazda kamera kullanılamıyor. Lütfen barkodu elle girmeyi deneyin."
+          "Bu cihazda kamera kullanılamıyor. Barkodu elle girmeyi deneyebilirsin."
         );
+
         return;
       }
 
-      const scannerElement = document.getElementById(
-        "esora-barcode-reader"
-      );
+      // DOM'un kamera alanını oluşturmasını bekle
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve();
+          });
+        });
+      });
+
+      const scannerElement =
+        document.getElementById(
+          "esora-barcode-reader"
+        );
 
       if (!scannerElement) {
+        setScanning(false);
+
         setCameraError(
           "Kamera alanı hazırlanamadı. Sayfayı yenileyip tekrar deneyin."
         );
-        return;
-      }
 
-      if (scannerRef.current) {
-        try {
-          await stopScanner();
-        } catch {
-          // Önceki scanner temizlenemezse yeni scanner yine denenir.
-        }
+        return;
       }
 
       const scanner = new Html5Qrcode(
@@ -303,43 +355,68 @@ export default function SiparisToplaPage() {
           await handleScanSuccess(decodedText);
         },
         () => {
-          // Barkod bulunamadığında burada işlem yapmıyoruz.
+          // Barkod bulunamadığında hata göstermiyoruz.
         }
       );
 
-      setScanning(true);
       setScannerReady(true);
+      setCameraError("");
     } catch (error) {
-      console.error("Kamera başlatma hatası:", error);
+      console.error(
+        "Kamera başlatma hatası:",
+        error
+      );
+
+      const scanner = scannerRef.current;
 
       scannerRef.current = null;
+
+      try {
+        if (scanner) {
+          await scanner.stop().catch(() => {});
+
+          try {
+            scanner.clear();
+          } catch {
+            // Temizleme hatası göz ardı edilir.
+          }
+        }
+      } catch {
+        // Temizleme hatası göz ardı edilir.
+      }
+
       setScanning(false);
       setScannerReady(false);
 
       let message =
-        "Kamera açılamadı. Tarayıcıdan kamera izni vermen gerekiyor.";
+        "Kamera açılamadı. Telefon tarayıcısının kamera iznini kontrol et.";
 
       if (error instanceof Error) {
-        const errorMessage = error.message.toLowerCase();
+        const errorMessage =
+          error.message.toLowerCase();
 
         if (
           errorMessage.includes("permission") ||
-          errorMessage.includes("notallowed")
+          errorMessage.includes("notallowed") ||
+          errorMessage.includes("denied")
         ) {
           message =
-            "Kamera izni verilmedi. Tarayıcının adres çubuğundaki kamera izinlerinden bu siteye kamera erişimi ver.";
+            "Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamera erişimine izin ver.";
         } else if (
           errorMessage.includes("notfound") ||
-          errorMessage.includes("camera")
+          errorMessage.includes("no camera")
         ) {
           message =
-            "Kamera bulunamadı. Telefonunun kamerasının kullanılabilir olduğundan emin ol.";
+            "Telefon kamerası bulunamadı veya kullanılamıyor.";
         } else if (
           errorMessage.includes("secure") ||
           errorMessage.includes("https")
         ) {
           message =
-            "Kamera için güvenli bağlantı gerekiyor. Siteyi HTTPS üzerinden aç.";
+            "Kamera kullanımı için HTTPS bağlantısı gerekiyor.";
+        } else {
+          message =
+            `Kamera başlatılamadı.\n\n${error.message}`;
         }
       }
 
@@ -347,22 +424,30 @@ export default function SiparisToplaPage() {
     }
   }
 
+  // --------------------------------------------------
+  // KAMERA TEMİZLEME
+  // --------------------------------------------------
+
   useEffect(() => {
     return () => {
-      if (scannerRef.current) {
-        scannerRef.current
-          .stop()
-          .catch(() => {})
-          .finally(() => {
-            try {
-              scannerRef.current?.clear();
-            } catch {
-              // Temizleme hatası göz ardı edilir.
-            }
+      const scanner = scannerRef.current;
 
-            scannerRef.current = null;
-          });
+      if (!scanner) {
+        return;
       }
+
+      scannerRef.current = null;
+
+      scanner
+        .stop()
+        .catch(() => {})
+        .finally(() => {
+          try {
+            scanner.clear();
+          } catch {
+            // Temizleme hatası göz ardı edilir.
+          }
+        });
     };
   }, []);
 
@@ -406,6 +491,10 @@ export default function SiparisToplaPage() {
     setCustomers(data || []);
   }
 
+  // --------------------------------------------------
+  // MÜŞTERİ SEÇ
+  // --------------------------------------------------
+
   function selectCustomer(customer: Customer) {
     setSelectedCustomer(customer);
     setCustomerSearch("");
@@ -428,6 +517,8 @@ export default function SiparisToplaPage() {
       return;
     }
 
+    const cleanValue = value.trim();
+
     const { data, error } = await supabase
       .from("products")
       .select(
@@ -435,7 +526,7 @@ export default function SiparisToplaPage() {
       )
       .eq("is_active", true)
       .or(
-        `product_name.ilike.%${value}%,sku.ilike.%${value}%,barcode.ilike.%${value}%`
+        `product_name.ilike.%${cleanValue}%,sku.ilike.%${cleanValue}%,barcode.ilike.%${cleanValue}%`
       )
       .limit(10);
 
@@ -454,7 +545,8 @@ export default function SiparisToplaPage() {
   function totalAmount() {
     return cart.reduce(
       (total, item) =>
-        total + item.quantity * item.unitPrice,
+        total +
+        item.quantity * item.unitPrice,
       0
     );
   }
@@ -470,11 +562,12 @@ export default function SiparisToplaPage() {
     }
 
     if (cart.length === 0) {
-      alert("Sipariş için en az bir ürün eklemelisin.");
+      alert(
+        "Sipariş için en az bir ürün eklemelisin."
+      );
       return;
     }
 
-    // Fiyat kontrolü
     const invalidPrice = cart.find(
       (item) => item.unitPrice <= 0
     );
@@ -486,7 +579,6 @@ export default function SiparisToplaPage() {
       return;
     }
 
-    // Miktar kontrolü
     const invalidQuantity = cart.find(
       (item) => item.quantity <= 0
     );
@@ -533,6 +625,7 @@ export default function SiparisToplaPage() {
         alert(
           "Sipariş oluşturuldu ancak sonuç alınamadı."
         );
+
         return;
       }
 
@@ -573,6 +666,7 @@ export default function SiparisToplaPage() {
     setSavedOrderNumber(null);
     setSavedOrderTotal(null);
     setCameraError("");
+    setScannerReady(false);
   }
 
   // --------------------------------------------------
@@ -620,6 +714,7 @@ export default function SiparisToplaPage() {
 
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
               <button
+                type="button"
                 onClick={startNewOrder}
                 className="flex-1 rounded-xl bg-slate-900 px-5 py-4 font-bold text-white hover:bg-slate-800"
               >
@@ -647,6 +742,7 @@ export default function SiparisToplaPage() {
     <div className="min-h-screen bg-slate-50 p-4 md:p-6">
       <div className="mx-auto max-w-6xl">
         {/* HEADER */}
+
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="mb-2">
@@ -673,6 +769,7 @@ export default function SiparisToplaPage() {
         </div>
 
         {/* MÜŞTERİ */}
+
         <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4">
             <h2 className="text-lg font-bold text-slate-900">
@@ -693,7 +790,8 @@ export default function SiparisToplaPage() {
 
                 {selectedCustomer.contact_name && (
                   <p className="mt-1 text-sm text-slate-600">
-                    Yetkili: {selectedCustomer.contact_name}
+                    Yetkili:{" "}
+                    {selectedCustomer.contact_name}
                   </p>
                 )}
 
@@ -716,6 +814,7 @@ export default function SiparisToplaPage() {
               </div>
 
               <button
+                type="button"
                 onClick={removeSelectedCustomer}
                 className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
               >
@@ -743,6 +842,7 @@ export default function SiparisToplaPage() {
                 <div className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
                   {customers.map((customer) => (
                     <button
+                      type="button"
                       key={customer.id}
                       onClick={() =>
                         selectCustomer(customer)
@@ -757,7 +857,8 @@ export default function SiparisToplaPage() {
                         {customer.contact_name
                           ? `${customer.contact_name} • `
                           : ""}
-                        {customer.phone || "Telefon yok"}
+                        {customer.phone ||
+                          "Telefon yok"}
                       </p>
 
                       {(customer.city ||
@@ -777,7 +878,8 @@ export default function SiparisToplaPage() {
           )}
         </div>
 
-        {/* BARKOD */}
+        {/* BARKOD / ÜRÜN EKLE */}
+
         <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4">
             <h2 className="text-lg font-bold text-slate-900">
@@ -807,11 +909,13 @@ export default function SiparisToplaPage() {
             />
 
             <button
+              type="button"
               onClick={() =>
                 findProductByBarcode(barcode)
               }
               disabled={
-                loadingProduct || !barcode.trim()
+                loadingProduct ||
+                !barcode.trim()
               }
               className="rounded-xl bg-slate-900 px-6 py-4 font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -822,6 +926,7 @@ export default function SiparisToplaPage() {
 
             {!scanning ? (
               <button
+                type="button"
                 onClick={startScanner}
                 className="rounded-xl border border-slate-200 bg-white px-6 py-4 font-semibold text-slate-700 hover:bg-slate-50"
               >
@@ -829,6 +934,7 @@ export default function SiparisToplaPage() {
               </button>
             ) : (
               <button
+                type="button"
                 onClick={stopScanner}
                 className="rounded-xl border border-red-200 bg-red-50 px-6 py-4 font-semibold text-red-600 hover:bg-red-100"
               >
@@ -838,45 +944,57 @@ export default function SiparisToplaPage() {
           </div>
 
           {cameraError && (
-            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            <div className="mt-4 whitespace-pre-line rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
               {cameraError}
             </div>
           )}
 
           {/* KAMERA */}
-          <div
-            className={`mt-5 overflow-hidden rounded-2xl bg-black ${
-              scanning ? "block" : "hidden"
-            }`}
-          >
-            <div className="relative">
-              <div
-                id="esora-barcode-reader"
-                className="w-full"
-              />
 
-              {scanning && (
-                <>
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <div className="h-32 w-72 rounded-xl border-2 border-white shadow-lg" />
+          {scanning && (
+            <div className="mt-5 overflow-hidden rounded-2xl bg-black">
+              <div className="relative min-h-[280px] w-full">
+                <div
+                  id="esora-barcode-reader"
+                  className="min-h-[280px] w-full"
+                />
+
+                {!scannerReady && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black text-center text-white">
+                    <div>
+                      <div className="text-4xl">
+                        📷
+                      </div>
+
+                      <p className="mt-3 font-semibold">
+                        Kamera açılıyor...
+                      </p>
+
+                      <p className="mt-1 text-sm text-slate-300">
+                        Lütfen kamera iznini onayla.
+                      </p>
+                    </div>
                   </div>
+                )}
 
-                  <div className="absolute bottom-4 left-0 right-0 text-center text-sm font-semibold text-white">
-                    Barkodu çerçevenin içine getir
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+                {scannerReady && (
+                  <>
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                      <div className="h-32 w-72 rounded-xl border-2 border-white shadow-lg" />
+                    </div>
 
-          {scanning && scannerReady && (
-            <div className="mt-3 rounded-xl border border-green-200 bg-green-50 p-3 text-center text-sm font-semibold text-green-700">
-              ✓ Kamera aktif — barkodu okut
+                    <div className="absolute bottom-4 left-0 right-0 text-center text-sm font-semibold text-white">
+                      Barkodu çerçevenin içine getir
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
 
         {/* MANUEL ÜRÜN ARAMA */}
+
         <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-3 text-lg font-bold text-slate-900">
             🔎 Ürün Ara
@@ -895,6 +1013,7 @@ export default function SiparisToplaPage() {
             <div className="mt-3 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
               {products.map((product) => (
                 <button
+                  type="button"
                   key={product.id}
                   onClick={() => {
                     addToCart(product);
@@ -923,8 +1042,9 @@ export default function SiparisToplaPage() {
                     </p>
 
                     <p className="mt-1 text-xs text-slate-400">
-                      SKU: {product.sku || "-"}{" "}
-                      • Barkod: {product.barcode || "-"}
+                      SKU: {product.sku || "-"} •
+                      Barkod:{" "}
+                      {product.barcode || "-"}
                     </p>
                   </div>
 
@@ -947,6 +1067,7 @@ export default function SiparisToplaPage() {
         </div>
 
         {/* SEPET */}
+
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
             <div>
@@ -961,6 +1082,7 @@ export default function SiparisToplaPage() {
 
             {cart.length > 0 && (
               <button
+                type="button"
                 onClick={clearCart}
                 className="text-sm font-semibold text-red-500 hover:underline"
               >
@@ -988,10 +1110,12 @@ export default function SiparisToplaPage() {
               <div className="divide-y divide-slate-100">
                 {cart.map((item) => {
                   const lineTotal =
-                    item.quantity * item.unitPrice;
+                    item.quantity *
+                    item.unitPrice;
 
-                  const stock =
-                    Number(item.product.stock || 0);
+                  const stock = Number(
+                    item.product.stock || 0
+                  );
 
                   const stockWarning =
                     item.quantity > stock;
@@ -1002,11 +1126,14 @@ export default function SiparisToplaPage() {
                       className="flex flex-col gap-4 p-5 md:flex-row md:items-center"
                     >
                       {/* GÖRSEL */}
+
                       <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
                         {item.product.image_url ? (
                           <img
                             src={item.product.image_url}
-                            alt={item.product.product_name}
+                            alt={
+                              item.product.product_name
+                            }
                             className="h-full w-full object-contain"
                           />
                         ) : (
@@ -1017,19 +1144,28 @@ export default function SiparisToplaPage() {
                       </div>
 
                       {/* ÜRÜN */}
+
                       <div className="min-w-0 flex-1">
                         <p className="font-bold text-slate-900">
                           {item.product.product_name}
                         </p>
 
                         <p className="mt-1 text-xs text-slate-400">
-                          SKU: {item.product.sku || "-"}{" "}
-                          • Barkod: {item.product.barcode || "-"}
+                          SKU:{" "}
+                          {item.product.sku ||
+                            "-"}{" "}
+                          • Barkod:{" "}
+                          {item.product.barcode ||
+                            "-"}
                         </p>
 
                         <p className="mt-1 text-sm font-semibold text-blue-700">
-                          {formatPrice(item.unitPrice)} ₺ /{" "}
-                          {item.product.unit || "Adet"}
+                          {formatPrice(
+                            item.unitPrice
+                          )}{" "}
+                          ₺ /{" "}
+                          {item.product.unit ||
+                            "Adet"}
                         </p>
 
                         <p
@@ -1039,8 +1175,10 @@ export default function SiparisToplaPage() {
                               : "text-slate-400"
                           }`}
                         >
-                          Stok: {formatPrice(stock)}{" "}
-                          {item.product.unit || "Adet"}
+                          Stok:{" "}
+                          {formatPrice(stock)}{" "}
+                          {item.product.unit ||
+                            "Adet"}
                         </p>
 
                         {stockWarning && (
@@ -1051,8 +1189,10 @@ export default function SiparisToplaPage() {
                       </div>
 
                       {/* MİKTAR */}
+
                       <div className="flex items-center gap-2">
                         <button
+                          type="button"
                           onClick={() =>
                             updateQuantity(
                               item.product.id,
@@ -1071,13 +1211,16 @@ export default function SiparisToplaPage() {
                           onChange={(e) =>
                             updateQuantity(
                               item.product.id,
-                              Number(e.target.value)
+                              Number(
+                                e.target.value
+                              )
                             )
                           }
                           className="h-10 w-20 rounded-lg border border-slate-200 text-center font-semibold outline-none focus:border-slate-400"
                         />
 
                         <button
+                          type="button"
                           onClick={() =>
                             updateQuantity(
                               item.product.id,
@@ -1091,20 +1234,28 @@ export default function SiparisToplaPage() {
                       </div>
 
                       {/* TOPLAM */}
+
                       <div className="min-w-28 text-right">
                         <p className="text-xs text-slate-400">
                           Toplam
                         </p>
 
                         <p className="text-lg font-bold text-slate-900">
-                          {formatPrice(lineTotal)} ₺
+                          {formatPrice(
+                            lineTotal
+                          )}{" "}
+                          ₺
                         </p>
                       </div>
 
                       {/* SİL */}
+
                       <button
+                        type="button"
                         onClick={() =>
-                          removeFromCart(item.product.id)
+                          removeFromCart(
+                            item.product.id
+                          )
                         }
                         className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-500"
                         title="Ürünü kaldır"
@@ -1116,7 +1267,8 @@ export default function SiparisToplaPage() {
                 })}
               </div>
 
-              {/* TOPLAM */}
+              {/* SİPARİŞ TOPLAMI */}
+
               <div className="border-t border-slate-200 bg-slate-50 p-5">
                 <div className="flex items-center justify-between">
                   <span className="text-lg font-semibold text-slate-700">
@@ -1124,7 +1276,10 @@ export default function SiparisToplaPage() {
                   </span>
 
                   <span className="text-2xl font-bold text-slate-900">
-                    {formatPrice(totalAmount())} ₺
+                    {formatPrice(
+                      totalAmount()
+                    )}{" "}
+                    ₺
                   </span>
                 </div>
 
@@ -1135,6 +1290,7 @@ export default function SiparisToplaPage() {
                 )}
 
                 <button
+                  type="button"
                   onClick={saveOrder}
                   disabled={
                     savingOrder ||
