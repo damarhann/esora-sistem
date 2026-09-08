@@ -9,12 +9,15 @@ type Customer = {
   company_name: string;
   contact_name: string | null;
   phone: string | null;
+  customer_type: string | null;
 };
 
 type Product = {
   id: string;
   product_name: string;
   barcode: string | null;
+  purchase_price: number | null;
+  wholesale_price: number | null;
   retail_price: number | null;
   stock: number | null;
   unit: string | null;
@@ -160,7 +163,9 @@ export default function OrdersPage() {
   async function loadCustomers() {
     const { data, error } = await supabase
       .from("customers")
-      .select("id, company_name, contact_name, phone")
+      .select(
+        "id, company_name, contact_name, phone, customer_type"
+      )
       .order("company_name");
 
     if (error) {
@@ -176,7 +181,7 @@ export default function OrdersPage() {
     const { data, error } = await supabase
       .from("products")
       .select(
-        "id, product_name, barcode, retail_price, stock, unit"
+        "id, product_name, barcode, purchase_price, wholesale_price, retail_price, stock, unit"
       )
       .eq("is_active", true)
       .order("product_name");
@@ -263,6 +268,92 @@ export default function OrdersPage() {
 
     return null;
   }
+
+  /*
+   * =========================================================
+   * MÜŞTERİ TİPİ / FİYAT HESAPLAMA
+   * =========================================================
+   */
+
+  function getSelectedCustomerType() {
+    const customer = customers.find(
+      (item) => item.id === selectedCustomer
+    );
+
+    return (
+      customer?.customer_type
+        ?.toLowerCase()
+        .trim() || ""
+    );
+  }
+
+  function isWholesaleCustomer() {
+    const type = getSelectedCustomerType();
+
+    return (
+      type === "toptan" ||
+      type === "wholesale" ||
+      type === "wholesaler" ||
+      type === "bayi" ||
+      type === "dealer"
+    );
+  }
+
+  function getSelectedCustomerTypeLabel() {
+    const type = getSelectedCustomerType();
+
+    if (
+      type === "toptan" ||
+      type === "wholesale" ||
+      type === "wholesaler"
+    ) {
+      return "Toptan";
+    }
+
+    if (
+      type === "bayi" ||
+      type === "dealer"
+    ) {
+      return "Bayi";
+    }
+
+    if (
+      type === "perakende" ||
+      type === "retail"
+    ) {
+      return "Perakende";
+    }
+
+    return "Perakende";
+  }
+
+  function getDefaultSalePrice(product: Product) {
+    if (isWholesaleCustomer()) {
+      return Number(
+        product.wholesale_price ??
+          product.retail_price ??
+          0
+      );
+    }
+
+    return Number(
+      product.retail_price ?? 0
+    );
+  }
+
+  function getDefaultPriceLabel() {
+    if (isWholesaleCustomer()) {
+      return "Toptan Satış Fiyatı";
+    }
+
+    return "Perakende Satış Fiyatı";
+  }
+
+  /*
+   * =========================================================
+   * SİPARİŞ LİSTESİ
+   * =========================================================
+   */
 
   const filteredOrders = orders.filter((order) => {
     const customer = getCustomer(order.customer_id);
@@ -514,6 +605,12 @@ export default function OrdersPage() {
     }
   }
 
+  /*
+   * =========================================================
+   * YENİ SİPARİŞ
+   * =========================================================
+   */
+
   function startNewOrder() {
     setSelectedCustomer("");
     setSelectedProduct("");
@@ -592,20 +689,26 @@ export default function OrdersPage() {
     setSelectedProduct(product.id);
 
     const existing = cart.find(
-      (item) => item.product.id === product.id
+      (item) =>
+        item.product.id === product.id
     );
 
     if (existing) {
-      setQuantity(String(existing.quantity));
+      setQuantity(
+        String(existing.quantity)
+      );
+
       setSalePrice(
         String(existing.unitPrice)
       );
     } else {
+      const defaultPrice =
+        getDefaultSalePrice(product);
+
       setQuantity("1");
+
       setSalePrice(
-        String(
-          Number(product.retail_price || 0)
-        )
+        String(defaultPrice)
       );
     }
 
@@ -977,6 +1080,12 @@ export default function OrdersPage() {
     }
   }
 
+  /*
+   * =========================================================
+   * CARİ / SİPARİŞ DETAY
+   * =========================================================
+   */
+
   function getSelectedOrderTotalQuantity() {
     return selectedOrderItems.reduce(
       (total, item) =>
@@ -1125,7 +1234,6 @@ export default function OrdersPage() {
             {/* BAŞLIK */}
 
             <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
               <div>
                 <h1 className="text-3xl font-bold text-slate-900">
                   Siparişler
@@ -1142,7 +1250,6 @@ export default function OrdersPage() {
               >
                 + Yeni Sipariş
               </button>
-
             </div>
 
             {/* İSTATİSTİKLER */}
@@ -1303,10 +1410,10 @@ export default function OrdersPage() {
             {/* ARAMA / FİLTRE */}
 
             <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-
               <div className="grid gap-3 md:grid-cols-[1fr_220px]">
 
                 <div className="relative">
+
                   <input
                     type="text"
                     value={search}
@@ -1327,6 +1434,7 @@ export default function OrdersPage() {
                       ✕
                     </button>
                   )}
+
                 </div>
 
                 <select
@@ -1778,8 +1886,6 @@ export default function OrdersPage() {
                     </div>
 
                   </div>
-
-                  {/* MOBİL YAZDIR */}
 
                   <button
                     onClick={printOrder}
@@ -2399,6 +2505,7 @@ export default function OrdersPage() {
                     <div className="w-full rounded-2xl bg-slate-50 p-5 md:w-96">
 
                       <div className="flex justify-between text-sm text-slate-500">
+
                         <span>
                           Ara toplam
                         </span>
@@ -2411,6 +2518,7 @@ export default function OrdersPage() {
                           )}{" "}
                           ₺
                         </span>
+
                       </div>
 
                       <div className="mt-3 flex justify-between border-t border-slate-200 pt-3">
@@ -2433,8 +2541,6 @@ export default function OrdersPage() {
                     </div>
 
                   </div>
-
-                  {/* İPTAL / TAMAMLANMA */}
 
                   {selectedOrder.status ===
                     "completed" && (
@@ -2470,27 +2576,29 @@ export default function OrdersPage() {
                 }`}
               >
 
-               <div className="mx-auto max-w-3xl">
+                <div className="mx-auto max-w-3xl">
 
-  <div className="mb-8 flex items-start justify-between border-b-2 border-slate-900 pb-5">
+                  <div className="mb-8 flex items-start justify-between border-b-2 border-slate-900 pb-5">
 
-    <div>
-      <img
-        src="/esoralogo.png"
-        alt="ESORA"
-        className="h-16 w-auto object-contain"
-      />
+                    <div>
 
-      <p className="mt-1 text-sm text-slate-500">
-        Sipariş / Fatura Belgesi
-      </p>
-    </div>
+                      <img
+                        src="/esoralogo.png"
+                        alt="ESORA"
+                        className="h-16 w-auto object-contain"
+                      />
 
-    <div className="text-right">
+                      <p className="mt-1 text-sm text-slate-500">
+                        Sipariş / Fatura Belgesi
+                      </p>
 
-      <p className="text-sm text-slate-500">
-        Sipariş No
-      </p>
+                    </div>
+
+                    <div className="text-right">
+
+                      <p className="text-sm text-slate-500">
+                        Sipariş No
+                      </p>
 
                       <p className="text-2xl font-bold text-slate-900">
                         #
@@ -2654,6 +2762,7 @@ export default function OrdersPage() {
                   <div className="ml-auto w-80">
 
                     <div className="flex justify-between py-2 text-sm">
+
                       <span>
                         Ara toplam
                       </span>
@@ -2666,9 +2775,11 @@ export default function OrdersPage() {
                         )}{" "}
                         ₺
                       </span>
+
                     </div>
 
                     <div className="flex justify-between border-t-2 border-slate-900 py-3 text-lg font-bold">
+
                       <span>
                         GENEL TOPLAM
                       </span>
@@ -2681,6 +2792,7 @@ export default function OrdersPage() {
                         )}{" "}
                         ₺
                       </span>
+
                     </div>
 
                   </div>
@@ -2713,6 +2825,7 @@ export default function OrdersPage() {
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
           <div>
+
             <h1 className="text-3xl font-bold text-slate-900">
               Yeni Sipariş
             </h1>
@@ -2720,6 +2833,7 @@ export default function OrdersPage() {
             <p className="mt-1 text-sm text-slate-500">
               Saha satışı için hızlı sipariş oluştur.
             </p>
+
           </div>
 
           <button
@@ -2731,7 +2845,9 @@ export default function OrdersPage() {
 
         </div>
 
-        {/* MÜŞTERİ */}
+        {/* =====================================================
+            MÜŞTERİ
+            ===================================================== */}
 
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
 
@@ -2755,12 +2871,34 @@ export default function OrdersPage() {
 
           </div>
 
+          {/* SADECE TEK SELECT */}
+
           <select
             value={selectedCustomer}
             onChange={(e) => {
 
+              const newCustomerId =
+                e.target.value;
+
+              if (
+                cart.length > 0 &&
+                newCustomerId !== selectedCustomer
+              ) {
+
+                const confirmed =
+                  window.confirm(
+                    "Müşteriyi değiştirirsen mevcut sepet temizlenecek.\n\nÇünkü önceki müşterinin fiyatları ile yeni müşterinin fiyatları farklı olabilir.\n\nDevam etmek istiyor musun?"
+                  );
+
+                if (!confirmed) {
+                  return;
+                }
+
+                setCart([]);
+              }
+
               setSelectedCustomer(
-                e.target.value
+                newCustomerId
               );
 
               setSelectedProduct("");
@@ -2768,7 +2906,7 @@ export default function OrdersPage() {
               setQuantity("1");
               setSalePrice("");
 
-              if (e.target.value) {
+              if (newCustomerId) {
                 focusBarcode();
               }
 
@@ -2799,6 +2937,22 @@ export default function OrdersPage() {
 
           </select>
 
+          {/* MÜŞTERİ TİPİ */}
+
+          {selectedCustomer && (
+            <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+
+              <span className="text-sm text-slate-500">
+                Müşteri tipi
+              </span>
+
+              <span className="font-semibold text-slate-900">
+                {getSelectedCustomerTypeLabel()}
+              </span>
+
+            </div>
+          )}
+
           {customers.length === 0 && (
             <p className="mt-3 text-sm text-red-500">
               Henüz müşteri bulunmuyor.
@@ -2807,7 +2961,9 @@ export default function OrdersPage() {
 
         </div>
 
-        {/* ÜRÜN */}
+        {/* =====================================================
+            ÜRÜN
+            ===================================================== */}
 
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6">
 
@@ -2830,6 +2986,8 @@ export default function OrdersPage() {
             </div>
 
           </div>
+
+          {/* BARKOD */}
 
           <div className="mb-5">
 
@@ -2884,6 +3042,8 @@ export default function OrdersPage() {
 
           </div>
 
+          {/* SCANNER */}
+
           {scannerOpen && (
             <div className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
 
@@ -2903,6 +3063,8 @@ export default function OrdersPage() {
             </div>
           )}
 
+          {/* ÜRÜN / FİYAT / MİKTAR */}
+
           <div className="grid gap-4 md:grid-cols-[1fr_180px_180px_auto]">
 
             <select
@@ -2917,9 +3079,11 @@ export default function OrdersPage() {
                   );
 
                 if (!product) {
+
                   setSelectedProduct("");
                   setBarcode("");
                   setSalePrice("");
+
                   return;
                 }
 
@@ -2996,6 +3160,8 @@ export default function OrdersPage() {
 
           </div>
 
+          {/* SEÇİLEN ÜRÜN */}
+
           {selectedProductData && (
 
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -3031,19 +3197,23 @@ export default function OrdersPage() {
                 <div className="text-left md:text-right">
 
                   <p className="text-xs text-slate-400">
-                    Normal Satış Fiyatı
+                    {getDefaultPriceLabel()}
                   </p>
 
                   <p className="text-xl font-bold text-slate-900">
 
                     {formatPrice(
-                      Number(
-                        selectedProductData.retail_price || 0
+                      getDefaultSalePrice(
+                        selectedProductData
                       )
                     )}{" "}
 
                     ₺
 
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Satış fiyatı değiştirilebilir.
                   </p>
 
                 </div>
@@ -3056,7 +3226,9 @@ export default function OrdersPage() {
 
         </div>
 
-        {/* SEPET */}
+        {/* =====================================================
+            SEPET
+            ===================================================== */}
 
         <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
 
@@ -3107,7 +3279,7 @@ export default function OrdersPage() {
                       </th>
 
                       <th className="px-6 py-4 text-right text-sm font-semibold text-slate-500">
-                        Normal Fiyat
+                        Perakende Fiyat
                       </th>
 
                       <th className="px-6 py-4 text-right text-sm font-semibold text-slate-500">
@@ -3138,14 +3310,15 @@ export default function OrdersPage() {
                         item.unitPrice *
                         item.quantity;
 
-                      const normalPrice =
+                      const retailPrice =
                         Number(
-                          item.product.retail_price || 0
+                          item.product.retail_price ||
+                            0
                         );
 
                       const discounted =
                         item.unitPrice <
-                        normalPrice;
+                        retailPrice;
 
                       return (
 
@@ -3169,8 +3342,9 @@ export default function OrdersPage() {
                           <td className="px-6 py-4 text-right text-slate-400">
 
                             {formatPrice(
-                              normalPrice
-                            )} ₺
+                              retailPrice
+                            )}{" "}
+                            ₺
 
                           </td>
 
@@ -3186,7 +3360,8 @@ export default function OrdersPage() {
 
                               {formatPrice(
                                 item.unitPrice
-                              )} ₺
+                              )}{" "}
+                              ₺
 
                             </span>
 
@@ -3202,7 +3377,8 @@ export default function OrdersPage() {
 
                           <td className="px-6 py-4 text-right font-bold">
 
-                            {formatPrice(total)} ₺
+                            {formatPrice(total)}{" "}
+                            ₺
 
                           </td>
 
@@ -3245,7 +3421,8 @@ export default function OrdersPage() {
 
                     {formatPrice(
                       calculateTotal()
-                    )} ₺
+                    )}{" "}
+                    ₺
 
                   </p>
 

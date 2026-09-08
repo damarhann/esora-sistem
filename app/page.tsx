@@ -71,7 +71,9 @@ export default function Home() {
 
   async function handleLogout() {
     setMobileMenuOpen(false);
+
     await supabase.auth.signOut();
+
     router.replace("/giris");
   }
 
@@ -84,10 +86,10 @@ export default function Home() {
       ordersResult,
       productsResult,
     ] = await Promise.all([
-      // DASHBOARD KPI'ları RPC'den geliyor.
+      // DASHBOARD KPI'LARI
       supabase.rpc("get_dashboard_summary"),
 
-      // Son 6 sipariş.
+      // SON 6 SİPARİŞ
       supabase
         .from("orders")
         .select(`
@@ -100,10 +102,12 @@ export default function Home() {
             company_name
           )
         `)
-        .order("created_at", { ascending: false })
+        .order("created_at", {
+          ascending: false,
+        })
         .limit(6),
 
-      // Kritik stok ürünleri.
+      // AKTİF ÜRÜNLER
       supabase
         .from("products")
         .select(`
@@ -129,7 +133,9 @@ export default function Home() {
       return;
     }
 
-    const normalizeOrders = (data: any[] | null): Order[] => {
+    const normalizeOrders = (
+      data: any[] | null
+    ): Order[] => {
       return (data || []).map((order: any) => ({
         ...order,
         customer: Array.isArray(order.customer)
@@ -175,7 +181,9 @@ export default function Home() {
       });
     }
 
-    setOrders(normalizeOrders(ordersResult.data));
+    setOrders(
+      normalizeOrders(ordersResult.data)
+    );
 
     setProducts(
       (productsResult.data || []) as Product[]
@@ -192,11 +200,13 @@ export default function Home() {
     return products
       .filter(
         (product) =>
-          Number(product.stock) <= Number(product.min_stock)
+          Number(product.stock) <=
+          Number(product.min_stock)
       )
       .sort(
         (a, b) =>
-          Number(a.stock) - Number(b.stock)
+          Number(a.stock) -
+          Number(b.stock)
       )
       .slice(0, 8);
   }, [products]);
@@ -211,19 +221,26 @@ export default function Home() {
       {mobileMenuOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 lg:hidden"
-          onClick={() => setMobileMenuOpen(false)}
+          onClick={() =>
+            setMobileMenuOpen(false)
+          }
         >
           <aside
-            className="h-full w-72 max-w-[85vw] overflow-y-auto bg-white p-5 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
+            className="h-full w-80 max-w-[88vw] overflow-y-auto bg-white p-5 shadow-2xl"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
           >
 
             {/* MOBİL MENÜ BAŞLIK */}
-            <div className="mb-8 flex items-center justify-between">
+
+            <div className="mb-6 flex items-center justify-between">
 
               <Link
                 href="/"
-                onClick={() => setMobileMenuOpen(false)}
+                onClick={() =>
+                  setMobileMenuOpen(false)
+                }
                 className="block max-w-[190px]"
               >
                 <img
@@ -235,7 +252,9 @@ export default function Home() {
 
               <button
                 type="button"
-                onClick={() => setMobileMenuOpen(false)}
+                onClick={() =>
+                  setMobileMenuOpen(false)
+                }
                 aria-label="Menüyü kapat"
                 className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 text-xl text-gray-700 transition hover:bg-gray-200"
               >
@@ -244,68 +263,239 @@ export default function Home() {
 
             </div>
 
-            {/* MOBİL NAVİGASYON */}
-            <nav className="space-y-2">
+            {/* ================================================= */}
+            {/* HIZLI İŞLEMLER */}
+            {/* ================================================= */}
 
-              <MobileMenuItem
-                href="/"
-                icon="📊"
-                text="Genel Bakış"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+            <div className="mb-5">
 
-              <MobileMenuItem
-                href="/musteriler"
-                icon="👥"
-                text="Müşteriler"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+              <p className="mb-3 px-2 text-xs font-bold uppercase tracking-wider text-gray-400">
+                Hızlı İşlemler
+              </p>
 
-              <MobileMenuItem
-                href="/urunler"
-                icon="📦"
-                text="Ürünler"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+              <div className="space-y-2">
 
-              <MobileMenuItem
-                href="/siparis-gecmisi"
-                icon="🛒"
-                text="Siparişler"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+                <MobileMenuItem
+                  href="/"
+                  icon="📊"
+                  text="Genel Bakış"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
 
-              <MobileMenuItem
-                href="/cari"
-                icon="💰"
-                text="Cari"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+                <MobileMenuItem
+                  href="/siparisler"
+                  icon="📝"
+                  text="Yeni Sipariş"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
 
-              <MobileMenuItem
-                href="/sevkiyat"
-                icon="🚚"
-                text="Sevkiyat"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+                <MobileMenuItem
+                  href="/siparis-topla"
+                  icon="🛒"
+                  text="Sipariş Topla"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
 
-              <MobileMenuItem
-                href="/tedarikciler"
-                icon="🏭"
-                text="Tedarikçiler"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+                <MobileMenuItem
+                  href="/barkod"
+                  icon="📷"
+                  text="Barkod"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
 
-              <MobileMenuItem
-                href="/raporlar"
-                icon="📈"
-                text="Raporlar"
-                onClick={() => setMobileMenuOpen(false)}
-              />
+                <MobileMenuItem
+                  href="/musteriler"
+                  icon="👥"
+                  text="Müşteriler"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
 
-            </nav>
+              </div>
 
+            </div>
+
+            {/* AYIRICI */}
+
+            <div className="my-5 border-t border-gray-200" />
+
+            {/* ================================================= */}
+            {/* SATIŞ VE SİPARİŞ */}
+            {/* ================================================= */}
+
+            <div className="mb-5">
+
+              <p className="mb-3 px-2 text-xs font-bold uppercase tracking-wider text-gray-400">
+                Satış ve Sipariş
+              </p>
+
+              <nav className="space-y-2">
+
+                <MobileMenuItem
+                  href="/siparisler"
+                  icon="📝"
+                  text="Yeni Sipariş"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/siparis-topla"
+                  icon="🛒"
+                  text="Sipariş Topla"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/siparis-gecmisi"
+                  icon="📋"
+                  text="Sipariş Geçmişi"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/sevkiyat"
+                  icon="🚚"
+                  text="Sevkiyat"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+              </nav>
+
+            </div>
+
+            {/* AYIRICI */}
+
+            <div className="my-5 border-t border-gray-200" />
+
+            {/* ================================================= */}
+            {/* STOK VE ÜRÜNLER */}
+            {/* ================================================= */}
+
+            <div className="mb-5">
+
+              <p className="mb-3 px-2 text-xs font-bold uppercase tracking-wider text-gray-400">
+                Stok ve Ürünler
+              </p>
+
+              <nav className="space-y-2">
+
+                <MobileMenuItem
+                  href="/urunler"
+                  icon="📦"
+                  text="Ürünler"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/stok"
+                  icon="📊"
+                  text="Stok"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/alislar"
+                  icon="📥"
+                  text="Alışlar"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/tedarikciler"
+                  icon="🏭"
+                  text="Tedarikçiler"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/barkod"
+                  icon="📷"
+                  text="Barkod"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+              </nav>
+
+            </div>
+
+            {/* AYIRICI */}
+
+            <div className="my-5 border-t border-gray-200" />
+
+            {/* ================================================= */}
+            {/* FİNANS */}
+            {/* ================================================= */}
+
+            <div className="mb-5">
+
+              <p className="mb-3 px-2 text-xs font-bold uppercase tracking-wider text-gray-400">
+                Finans
+              </p>
+
+              <nav className="space-y-2">
+
+                <MobileMenuItem
+                  href="/cari"
+                  icon="💰"
+                  text="Cari"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/kasa-banka"
+                  icon="🏦"
+                  text="Kasa-Banka"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+                <MobileMenuItem
+                  href="/raporlar"
+                  icon="📈"
+                  text="Raporlar"
+                  onClick={() =>
+                    setMobileMenuOpen(false)
+                  }
+                />
+
+              </nav>
+
+            </div>
+
+            {/* ================================================= */}
             {/* MOBİL ÇIKIŞ */}
+            {/* ================================================= */}
+
             <div className="mt-8 border-t border-gray-200 pt-5">
 
               <button
@@ -332,7 +522,9 @@ export default function Home() {
         <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white p-5 lg:block">
 
           {/* ESORA LOGO */}
+
           <div className="mb-8 flex w-full items-center justify-center">
+
             <Link
               href="/"
               className="block w-full transition-opacity hover:opacity-80"
@@ -343,6 +535,7 @@ export default function Home() {
                 className="block h-auto w-full object-contain"
               />
             </Link>
+
           </div>
 
           <nav className="space-y-2">
@@ -367,9 +560,21 @@ export default function Home() {
             />
 
             <MenuItem
+              href="/siparisler"
+              icon="📝"
+              text="Yeni Sipariş"
+            />
+
+            <MenuItem
               href="/siparis-gecmisi"
               icon="🛒"
               text="Siparişler"
+            />
+
+            <MenuItem
+              href="/siparis-topla"
+              icon="📋"
+              text="Sipariş Topla"
             />
 
             <MenuItem
@@ -379,9 +584,33 @@ export default function Home() {
             />
 
             <MenuItem
+              href="/kasa-banka"
+              icon="🏦"
+              text="Kasa-Banka"
+            />
+
+            <MenuItem
+              href="/stok"
+              icon="📊"
+              text="Stok"
+            />
+
+            <MenuItem
+              href="/alislar"
+              icon="📥"
+              text="Alışlar"
+            />
+
+            <MenuItem
               href="/sevkiyat"
               icon="🚚"
               text="Sevkiyat"
+            />
+
+            <MenuItem
+              href="/barkod"
+              icon="📷"
+              text="Barkod"
             />
 
             <MenuItem
@@ -397,6 +626,7 @@ export default function Home() {
             />
 
           </nav>
+
         </aside>
 
         {/* ===================================================== */}
@@ -413,7 +643,9 @@ export default function Home() {
 
             <button
               type="button"
-              onClick={() => setMobileMenuOpen(true)}
+              onClick={() =>
+                setMobileMenuOpen(true)
+              }
               aria-label="Menüyü aç"
               className="flex h-11 w-11 items-center justify-center rounded-xl bg-gray-900 text-2xl text-white shadow-sm transition hover:bg-gray-800"
             >
@@ -442,6 +674,7 @@ export default function Home() {
           <div className="mb-8 flex flex-col justify-between gap-4 md:flex-row md:items-center">
 
             <div>
+
               <h2 className="text-3xl font-bold text-gray-900">
                 Genel Bakış
               </h2>
@@ -449,6 +682,7 @@ export default function Home() {
               <p className="mt-1 text-gray-500">
                 ESORA işletme yönetim paneline hoş geldin.
               </p>
+
             </div>
 
             <div className="flex items-center gap-3">
@@ -481,10 +715,13 @@ export default function Home() {
 
           {error && (
             <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+
               <strong>
                 Dashboard verileri alınamadı:
               </strong>{" "}
+
               {error}
+
             </div>
           )}
 
@@ -581,11 +818,13 @@ export default function Home() {
           <div className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-3">
 
             {/* SON SİPARİŞLER */}
+
             <div className="rounded-2xl border border-gray-200 bg-white p-6 xl:col-span-2">
 
               <div className="flex items-center justify-between">
 
                 <div>
+
                   <h3 className="text-lg font-semibold text-gray-900">
                     Son Siparişler
                   </h3>
@@ -593,6 +832,7 @@ export default function Home() {
                   <p className="mt-1 text-sm text-gray-500">
                     Sistemdeki son siparişler
                   </p>
+
                 </div>
 
                 <Link
@@ -607,14 +847,19 @@ export default function Home() {
               <div className="mt-6">
 
                 {loading ? (
+
                   <div className="py-8 text-center text-sm text-gray-500">
                     Siparişler yükleniyor...
                   </div>
+
                 ) : orders.length === 0 ? (
+
                   <div className="py-8 text-center text-sm text-gray-500">
                     Henüz sipariş bulunmuyor.
                   </div>
+
                 ) : (
+
                   <div className="divide-y divide-gray-100">
 
                     {orders.map((order) => (
@@ -632,6 +877,7 @@ export default function Home() {
                           </div>
 
                           <div>
+
                             <p className="font-semibold text-gray-900">
                               Sipariş #{order.order_number}
                             </p>
@@ -640,6 +886,7 @@ export default function Home() {
                               {order.customer?.company_name ||
                                 "Müşteri bulunamadı"}
                             </p>
+
                           </div>
 
                         </div>
@@ -647,9 +894,12 @@ export default function Home() {
                         <div className="flex items-center gap-4 md:text-right">
 
                           <div>
+
                             <p className="font-semibold text-gray-900">
                               {formatMoney(
-                                Number(order.total || 0)
+                                Number(
+                                  order.total || 0
+                                )
                               )}
                             </p>
 
@@ -658,6 +908,7 @@ export default function Home() {
                                 order.created_at
                               )}
                             </p>
+
                           </div>
 
                           <StatusBadge
@@ -671,6 +922,7 @@ export default function Home() {
                     ))}
 
                   </div>
+
                 )}
 
               </div>
@@ -678,11 +930,13 @@ export default function Home() {
             </div>
 
             {/* KRİTİK STOK */}
+
             <div className="rounded-2xl border border-gray-200 bg-white p-6">
 
               <div className="flex items-center justify-between">
 
                 <div>
+
                   <h3 className="text-lg font-semibold text-gray-900">
                     Kritik Stoklar
                   </h3>
@@ -690,6 +944,7 @@ export default function Home() {
                   <p className="mt-1 text-sm text-gray-500">
                     Minimum seviyedeki ürünler
                   </p>
+
                 </div>
 
                 <Link
@@ -704,10 +959,13 @@ export default function Home() {
               <div className="mt-6">
 
                 {loading ? (
+
                   <div className="py-8 text-center text-sm text-gray-500">
                     Stoklar yükleniyor...
                   </div>
+
                 ) : criticalProducts.length === 0 ? (
+
                   <div className="rounded-xl bg-gray-50 p-6 text-center">
 
                     <div className="text-3xl">
@@ -719,7 +977,9 @@ export default function Home() {
                     </p>
 
                   </div>
+
                 ) : (
+
                   <div className="space-y-3">
 
                     {criticalProducts.map(
@@ -771,6 +1031,7 @@ export default function Home() {
                     )}
 
                   </div>
+
                 )}
 
               </div>
@@ -788,6 +1049,7 @@ export default function Home() {
             <div className="flex flex-col justify-between gap-2 md:flex-row md:items-center">
 
               <div>
+
                 <p className="text-sm font-semibold text-gray-900">
                   ESORA Yönetim Sistemi
                 </p>
@@ -797,6 +1059,7 @@ export default function Home() {
                   sevkiyat süreçlerini tek merkezden
                   yönet.
                 </p>
+
               </div>
 
               <p className="text-xs text-gray-400">
@@ -810,6 +1073,7 @@ export default function Home() {
         </section>
 
       </div>
+
     </main>
   );
 }
@@ -863,9 +1127,12 @@ function MobileMenuItem({
     <Link
       href={href}
       onClick={onClick}
-      className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-100"
+      className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-100 active:bg-gray-100"
     >
-      <span>{icon}</span>
+      <span className="flex w-7 items-center justify-center text-lg">
+        {icon}
+      </span>
+
       <span>{text}</span>
     </Link>
   );
@@ -934,21 +1201,25 @@ function StatusBadge({
       className:
         "bg-gray-100 text-gray-700",
     },
+
     preparing: {
       label: "Hazırlanıyor",
       className:
         "bg-yellow-100 text-yellow-800",
     },
+
     shipped: {
       label: "Sevk Edildi",
       className:
         "bg-blue-100 text-blue-800",
     },
+
     completed: {
       label: "Tamamlandı",
       className:
         "bg-green-100 text-green-800",
     },
+
     cancelled: {
       label: "İptal",
       className:
@@ -966,3 +1237,4 @@ function StatusBadge({
     </span>
   );
 }
+
