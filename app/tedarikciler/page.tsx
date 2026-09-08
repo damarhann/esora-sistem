@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -29,6 +28,21 @@ type SupplierTransaction = {
   amount: number;
 };
 
+const emptyForm = {
+  company_name: "",
+  contact_name: "",
+  phone: "",
+  email: "",
+  city: "",
+  district: "",
+  address: "",
+  tax_number: "",
+  tax_office: "",
+  payment_method: "Nakit",
+  payment_term: "0",
+  notes: "",
+};
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("tr-TR", {
     style: "currency",
@@ -45,24 +59,16 @@ export default function SuppliersPage() {
   const [search, setSearch] = useState("");
 
   const [showModal, setShowModal] = useState(false);
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(
+    null
+  );
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const [form, setForm] = useState({
-    company_name: "",
-    contact_name: "",
-    phone: "",
-    email: "",
-    city: "",
-    district: "",
-    address: "",
-    tax_number: "",
-    tax_office: "",
-    payment_method: "Nakit",
-    payment_term: "0",
-    notes: "",
-  });
+  const [form, setForm] = useState(emptyForm);
 
   async function loadData() {
     setLoading(true);
@@ -94,7 +100,6 @@ export default function SuppliersPage() {
     }
 
     setSuppliers((supplierResult.data || []) as Supplier[]);
-
     setTransactions(
       (transactionResult.data || []) as SupplierTransaction[]
     );
@@ -139,70 +144,182 @@ export default function SuppliersPage() {
       .reduce((total, item) => total + Number(item.amount), 0);
   }
 
-  async function saveSupplier() {
-  setError("");
-
-  if (!form.company_name.trim()) {
-    setError("Firma adı zorunludur.");
-    return;
+  function resetForm() {
+    setForm({ ...emptyForm });
+    setEditingSupplierId(null);
+    setError("");
   }
 
-  const paymentTerm = Number(form.payment_term);
-
-  if (paymentTerm < 0) {
-    setError("Vade günü negatif olamaz.");
-    return;
+  function openNewSupplier() {
+    resetForm();
+    setShowModal(true);
   }
 
-  setSaving(true);
+  function openEditSupplier(supplier: Supplier) {
+    setError("");
 
-  const { error: insertError } = await supabase.rpc(
-    "create_supplier",
-    {
-      p_company_name: form.company_name.trim(),
-      p_contact_name: form.contact_name.trim() || null,
-      p_phone: form.phone.trim() || null,
-      p_email: form.email.trim() || null,
-      p_city: form.city.trim() || null,
-      p_district: form.district.trim() || null,
-      p_address: form.address.trim() || null,
-      p_tax_number: form.tax_number.trim() || null,
-      p_tax_office: form.tax_office.trim() || null,
-      p_payment_method: form.payment_method,
-      p_payment_term: paymentTerm || 0,
-      p_notes: form.notes.trim() || null,
+    setEditingSupplierId(supplier.id);
+
+    setForm({
+      company_name: supplier.company_name || "",
+      contact_name: supplier.contact_name || "",
+      phone: supplier.phone || "",
+      email: supplier.email || "",
+      city: supplier.city || "",
+      district: supplier.district || "",
+      address: supplier.address || "",
+      tax_number: supplier.tax_number || "",
+      tax_office: supplier.tax_office || "",
+      payment_method: supplier.payment_method || "Nakit",
+      payment_term: String(supplier.payment_term ?? 0),
+      notes: supplier.notes || "",
+    });
+
+    setShowModal(true);
+  }
+
+  function closeModal() {
+    if (saving) {
+      return;
     }
-  );
 
-  if (insertError) {
-    console.error(insertError);
-    setError(
-      insertError.message || "Tedarikçi kaydedilemedi."
-    );
-    setSaving(false);
-    return;
+    setShowModal(false);
+    resetForm();
   }
 
-  setForm({
-    company_name: "",
-    contact_name: "",
-    phone: "",
-    email: "",
-    city: "",
-    district: "",
-    address: "",
-    tax_number: "",
-    tax_office: "",
-    payment_method: "Nakit",
-    payment_term: "0",
-    notes: "",
-  });
+  async function saveSupplier() {
+    setError("");
 
-  setShowModal(false);
-  setSaving(false);
+    if (!form.company_name.trim()) {
+      setError("Firma adı zorunludur.");
+      return;
+    }
 
-  await loadData();
-}
+    const paymentTerm = Number(form.payment_term);
+
+    if (!Number.isFinite(paymentTerm) || paymentTerm < 0) {
+      setError("Vade günü negatif olamaz.");
+      return;
+    }
+
+    setSaving(true);
+
+    if (editingSupplierId) {
+      const { error: updateError } = await supabase
+        .from("suppliers")
+        .update({
+          company_name: form.company_name.trim(),
+          contact_name: form.contact_name.trim() || null,
+          phone: form.phone.trim() || null,
+          email: form.email.trim() || null,
+          city: form.city.trim() || null,
+          district: form.district.trim() || null,
+          address: form.address.trim() || null,
+          tax_number: form.tax_number.trim() || null,
+          tax_office: form.tax_office.trim() || null,
+          payment_method: form.payment_method,
+          payment_term: paymentTerm || 0,
+          notes: form.notes.trim() || null,
+        })
+        .eq("id", editingSupplierId);
+
+      if (updateError) {
+        console.error(updateError);
+        setError(
+          updateError.message || "Tedarikçi güncellenemedi."
+        );
+        setSaving(false);
+        return;
+      }
+    } else {
+      const { error: insertError } = await supabase.rpc(
+        "create_supplier",
+        {
+          p_company_name: form.company_name.trim(),
+          p_contact_name: form.contact_name.trim() || null,
+          p_phone: form.phone.trim() || null,
+          p_email: form.email.trim() || null,
+          p_city: form.city.trim() || null,
+          p_district: form.district.trim() || null,
+          p_address: form.address.trim() || null,
+          p_tax_number: form.tax_number.trim() || null,
+          p_tax_office: form.tax_office.trim() || null,
+          p_payment_method: form.payment_method,
+          p_payment_term: paymentTerm || 0,
+          p_notes: form.notes.trim() || null,
+        }
+      );
+
+      if (insertError) {
+        console.error(insertError);
+        setError(
+          insertError.message || "Tedarikçi kaydedilemedi."
+        );
+        setSaving(false);
+        return;
+      }
+    }
+
+    setSaving(false);
+    setShowModal(false);
+    resetForm();
+
+    await loadData();
+  }
+
+  async function deleteSupplier(supplier: Supplier) {
+    if (deletingId) {
+      return;
+    }
+
+    const balance = getSupplierBalance(supplier.id);
+    const purchases = getSupplierPurchases(supplier.id);
+
+    const hasTransactions = transactions.some(
+      (item) => item.supplier_id === supplier.id
+    );
+
+    let message = `"${supplier.company_name}" tedarikçisini silmek istediğine emin misin?\n\n`;
+
+    if (hasTransactions || purchases > 0 || balance !== 0) {
+      message +=
+        "Bu tedarikçiye ait geçmiş cari/alış hareketleri bulunduğu için kayıt tamamen silinmeyecek, pasif hale getirilecektir.\n\n";
+    } else {
+      message +=
+        "Tedarikçi pasif hale getirilecek ve aktif listeden kaldırılacaktır.\n\n";
+    }
+
+    message += "Bu işlemi onaylıyor musun?";
+
+    const confirmed = window.confirm(message);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingId(supplier.id);
+    setError("");
+
+    const { error: deleteError } = await supabase
+      .from("suppliers")
+      .update({
+        is_active: false,
+      })
+      .eq("id", supplier.id);
+
+    if (deleteError) {
+      console.error(deleteError);
+      setError(
+        deleteError.message || "Tedarikçi silinemedi."
+      );
+      setDeletingId(null);
+      return;
+    }
+
+    setDeletingId(null);
+
+    await loadData();
+  }
 
   const filteredSuppliers = suppliers.filter((supplier) => {
     const searchText = search.toLowerCase().trim();
@@ -215,9 +332,11 @@ export default function SuppliersPage() {
       supplier.company_name,
       supplier.contact_name,
       supplier.phone,
+      supplier.email,
       supplier.city,
       supplier.district,
       supplier.tax_number,
+      supplier.tax_office,
     ]
       .filter(Boolean)
       .some((value) =>
@@ -258,10 +377,7 @@ export default function SuppliersPage() {
           </div>
 
           <button
-            onClick={() => {
-              setError("");
-              setShowModal(true);
-            }}
+            onClick={openNewSupplier}
             className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
           >
             + Yeni Tedarikçi
@@ -357,7 +473,7 @@ export default function SuppliersPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
+              <table className="w-full min-w-[1100px] text-left text-sm">
 
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-400">
@@ -390,6 +506,10 @@ export default function SuppliersPage() {
                       Durum
                     </th>
 
+                    <th className="px-5 py-4 text-right">
+                      İşlemler
+                    </th>
+
                   </tr>
                 </thead>
 
@@ -405,16 +525,28 @@ export default function SuppliersPage() {
                     return (
                       <tr
                         key={supplier.id}
-                        onClick={() =>
-                          router.push(
-                            `/tedarikciler/${supplier.id}`
-                          )
-                        }
-                        className="cursor-pointer border-b border-slate-100 transition hover:bg-slate-50"
+                        className={`border-b border-slate-100 transition hover:bg-slate-50 ${
+                          !supplier.is_active
+                            ? "bg-slate-50/70"
+                            : ""
+                        }`}
                       >
 
-                        <td className="px-5 py-4">
-                          <div className="font-semibold text-slate-900">
+                        <td
+                          className="cursor-pointer px-5 py-4"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
+                          <div
+                            className={`font-semibold ${
+                              supplier.is_active
+                                ? "text-slate-900"
+                                : "text-slate-500"
+                            }`}
+                          >
                             {supplier.company_name}
                           </div>
 
@@ -425,7 +557,14 @@ export default function SuppliersPage() {
                           )}
                         </td>
 
-                        <td className="px-5 py-4">
+                        <td
+                          className="cursor-pointer px-5 py-4"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
                           {supplier.phone ? (
                             <div className="font-medium text-slate-700">
                               {supplier.phone}
@@ -443,7 +582,14 @@ export default function SuppliersPage() {
                           )}
                         </td>
 
-                        <td className="px-5 py-4 text-slate-600">
+                        <td
+                          className="cursor-pointer px-5 py-4 text-slate-600"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
                           {[
                             supplier.city,
                             supplier.district,
@@ -452,7 +598,14 @@ export default function SuppliersPage() {
                             .join(" / ") || "-"}
                         </td>
 
-                        <td className="px-5 py-4">
+                        <td
+                          className="cursor-pointer px-5 py-4"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
                           <div className="font-medium text-slate-700">
                             {supplier.payment_method || "Nakit"}
                           </div>
@@ -464,11 +617,25 @@ export default function SuppliersPage() {
                           )}
                         </td>
 
-                        <td className="px-5 py-4 font-semibold text-slate-900">
+                        <td
+                          className="cursor-pointer px-5 py-4 font-semibold text-slate-900"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
                           {formatMoney(purchases)}
                         </td>
 
-                        <td className="px-5 py-4">
+                        <td
+                          className="cursor-pointer px-5 py-4"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
                           <span
                             className={
                               balance > 0
@@ -480,7 +647,14 @@ export default function SuppliersPage() {
                           </span>
                         </td>
 
-                        <td className="px-5 py-4">
+                        <td
+                          className="cursor-pointer px-5 py-4"
+                          onClick={() =>
+                            router.push(
+                              `/tedarikciler/${supplier.id}`
+                            )
+                          }
+                        >
                           {supplier.is_active ? (
                             <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
                               Aktif
@@ -490,6 +664,38 @@ export default function SuppliersPage() {
                               Pasif
                             </span>
                           )}
+                        </td>
+
+                        {/* ACTIONS */}
+                        <td className="px-5 py-4">
+                          <div className="flex items-center justify-end gap-2">
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditSupplier(supplier);
+                              }}
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                            >
+                              ✏️ Düzenle
+                            </button>
+
+                            {supplier.is_active && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteSupplier(supplier);
+                                }}
+                                disabled={deletingId === supplier.id}
+                                className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {deletingId === supplier.id
+                                  ? "Siliniyor..."
+                                  : "🗑️ Sil"}
+                              </button>
+                            )}
+
+                          </div>
                         </td>
 
                       </tr>
@@ -503,32 +709,39 @@ export default function SuppliersPage() {
 
         </section>
 
-        {/* NEW SUPPLIER MODAL */}
+        {/* SUPPLIER MODAL */}
         {showModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
 
+              {/* MODAL HEADER */}
               <div className="flex items-center justify-between border-b border-slate-200 p-5">
                 <div>
                   <h2 className="text-lg font-bold text-slate-900">
-                    Yeni Tedarikçi
+                    {editingSupplierId
+                      ? "Tedarikçiyi Düzenle"
+                      : "Yeni Tedarikçi"}
                   </h2>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Tedarikçi bilgilerini eksiksiz gir
+                    {editingSupplierId
+                      ? "Tedarikçi bilgilerini güncelle"
+                      : "Tedarikçi bilgilerini eksiksiz gir"}
                   </p>
                 </div>
 
                 <button
-                  onClick={() => setShowModal(false)}
+                  onClick={closeModal}
                   className="text-xl text-slate-400 hover:text-slate-700"
                 >
                   ×
                 </button>
               </div>
 
+              {/* FORM */}
               <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
 
+                {/* COMPANY */}
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Firma Adı *
@@ -547,6 +760,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* CONTACT */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Yetkili
@@ -565,6 +779,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* PHONE */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Telefon
@@ -583,6 +798,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* EMAIL */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     E-posta
@@ -602,6 +818,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* CITY */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Şehir
@@ -620,6 +837,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* DISTRICT */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     İlçe
@@ -638,6 +856,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* ADDRESS */}
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Adres
@@ -657,6 +876,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* TAX NUMBER */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Vergi Numarası
@@ -674,6 +894,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* TAX OFFICE */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Vergi Dairesi
@@ -691,6 +912,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* PAYMENT METHOD */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Ödeme Yöntemi
@@ -714,6 +936,7 @@ export default function SuppliersPage() {
                   </select>
                 </div>
 
+                {/* PAYMENT TERM */}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Vade (Gün)
@@ -733,6 +956,7 @@ export default function SuppliersPage() {
                   />
                 </div>
 
+                {/* NOTES */}
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
                     Notlar
@@ -754,11 +978,13 @@ export default function SuppliersPage() {
 
               </div>
 
+              {/* MODAL FOOTER */}
               <div className="flex justify-end gap-3 border-t border-slate-200 p-5">
 
                 <button
-                  onClick={() => setShowModal(false)}
-                  className="rounded-xl bg-slate-100 px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200"
+                  onClick={closeModal}
+                  disabled={saving}
+                  className="rounded-xl bg-slate-100 px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 disabled:opacity-50"
                 >
                   Vazgeç
                 </button>
@@ -770,6 +996,8 @@ export default function SuppliersPage() {
                 >
                   {saving
                     ? "Kaydediliyor..."
+                    : editingSupplierId
+                    ? "Değişiklikleri Kaydet"
                     : "Tedarikçiyi Kaydet"}
                 </button>
 

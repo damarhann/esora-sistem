@@ -58,6 +58,7 @@ function formatDate(value: string) {
 
 export default function Home() {
   const router = useRouter();
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dashboard, setDashboard] =
@@ -67,8 +68,8 @@ export default function Home() {
   const [error, setError] = useState("");
 
   async function handleLogout() {
-  await supabase.auth.signOut();
-  router.replace("/giris");
+    await supabase.auth.signOut();
+    router.replace("/giris");
   }
 
   async function loadDashboard() {
@@ -80,10 +81,10 @@ export default function Home() {
       ordersResult,
       productsResult,
     ] = await Promise.all([
-      // DASHBOARD KPI'ları artık RPC'den geliyor.
+      // DASHBOARD KPI'ları RPC'den geliyor.
       supabase.rpc("get_dashboard_summary"),
 
-      // Sadece ekranda göstermek için son 6 sipariş.
+      // Son 6 sipariş.
       supabase
         .from("orders")
         .select(`
@@ -99,7 +100,7 @@ export default function Home() {
         .order("created_at", { ascending: false })
         .limit(6),
 
-      // Kritik stok listesini göstermek için ürünler.
+      // Kritik stok ürünleri.
       supabase
         .from("products")
         .select(`
@@ -136,9 +137,14 @@ export default function Home() {
 
     const dashboardData = dashboardResult.data;
 
-    if (Array.isArray(dashboardData) && dashboardData.length > 0) {
+    if (
+      Array.isArray(dashboardData) &&
+      dashboardData.length > 0
+    ) {
       setDashboard({
-        today_sales: Number(dashboardData[0].today_sales || 0),
+        today_sales: Number(
+          dashboardData[0].today_sales || 0
+        ),
         pending_orders: Number(
           dashboardData[0].pending_orders || 0
         ),
@@ -199,14 +205,18 @@ export default function Home() {
         {/* SOL MENÜ */}
         <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white p-5 lg:block">
 
-          <div className="mb-8">
-            <h1 className="text-2xl font-bold tracking-tight">
-              ESORA
-            </h1>
-
-            <p className="text-sm text-gray-500">
-              Yönetim Sistemi
-            </p>
+          {/* ESORA LOGO */}
+          <div className="mb-8 flex w-full items-center justify-center">
+            <Link
+              href="/"
+              className="block w-full transition-opacity hover:opacity-80"
+            >
+              <img
+                src="/esoralogo.png"
+                alt="ESORA"
+                className="block h-auto w-full object-contain"
+              />
+            </Link>
           </div>
 
           <nav className="space-y-2">
@@ -280,28 +290,35 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-3">
-  <button
-    onClick={loadDashboard}
-    disabled={loading}
-    className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
-  >
-    🔄 {loading ? "Yükleniyor..." : "Yenile"}
-  </button>
 
-  <button
-    onClick={handleLogout}
-    className="rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-800"
-  >
-    Çıkış Yap
-  </button>
-</div>
+              <button
+                onClick={loadDashboard}
+                disabled={loading}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
+              >
+                🔄{" "}
+                {loading
+                  ? "Yükleniyor..."
+                  : "Yenile"}
+              </button>
+
+              <button
+                onClick={handleLogout}
+                className="rounded-xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-gray-800"
+              >
+                Çıkış Yap
+              </button>
+
+            </div>
 
           </div>
 
           {/* HATA */}
           {error && (
             <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-              <strong>Dashboard verileri alınamadı:</strong>{" "}
+              <strong>
+                Dashboard verileri alınamadı:
+              </strong>{" "}
               {error}
             </div>
           )}
@@ -466,11 +483,15 @@ export default function Home() {
                             </p>
 
                             <p className="text-xs text-gray-400">
-                              {formatDate(order.created_at)}
+                              {formatDate(
+                                order.created_at
+                              )}
                             </p>
                           </div>
 
-                          <StatusBadge status={order.status} />
+                          <StatusBadge
+                            status={order.status}
+                          />
 
                         </div>
 
@@ -530,45 +551,53 @@ export default function Home() {
                 ) : (
                   <div className="space-y-3">
 
-                    {criticalProducts.map((product) => (
+                    {criticalProducts.map(
+                      (product) => (
 
-                      <Link
-                        key={product.id}
-                        href="/stok"
-                        className="block rounded-xl border border-gray-100 p-4 transition hover:bg-gray-50"
-                      >
+                        <Link
+                          key={product.id}
+                          href="/stok"
+                          className="block rounded-xl border border-gray-100 p-4 transition hover:bg-gray-50"
+                        >
 
-                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start justify-between gap-3">
 
-                          <div className="min-w-0">
+                            <div className="min-w-0">
 
-                            <p className="truncate text-sm font-semibold text-gray-900">
-                              {product.product_name}
-                            </p>
-
-                            {product.barcode && (
-                              <p className="mt-1 text-xs text-gray-400">
-                                Barkod: {product.barcode}
+                              <p className="truncate text-sm font-semibold text-gray-900">
+                                {product.product_name}
                               </p>
-                            )}
+
+                              {product.barcode && (
+                                <p className="mt-1 text-xs text-gray-400">
+                                  Barkod:{" "}
+                                  {product.barcode}
+                                </p>
+                              )}
+
+                            </div>
+
+                            <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-700">
+                              {Number(
+                                product.stock
+                              )}{" "}
+                              {product.unit ||
+                                "Adet"}
+                            </span>
 
                           </div>
 
-                          <span className="shrink-0 rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-700">
-                            {Number(product.stock)}{" "}
-                            {product.unit || "Adet"}
-                          </span>
+                          <p className="mt-2 text-xs text-gray-500">
+                            Minimum stok:{" "}
+                            {Number(
+                              product.min_stock
+                            )}
+                          </p>
 
-                        </div>
+                        </Link>
 
-                        <p className="mt-2 text-xs text-gray-500">
-                          Minimum stok:{" "}
-                          {Number(product.min_stock)}
-                        </p>
-
-                      </Link>
-
-                    ))}
+                      )
+                    )}
 
                   </div>
                 )}
@@ -590,8 +619,9 @@ export default function Home() {
                 </p>
 
                 <p className="mt-1 text-xs text-gray-500">
-                  İşletmenin sipariş, stok, cari ve sevkiyat
-                  süreçlerini tek merkezden yönet.
+                  İşletmenin sipariş, stok, cari ve
+                  sevkiyat süreçlerini tek merkezden
+                  yönet.
                 </p>
               </div>
 
@@ -688,23 +718,28 @@ function StatusBadge({
   > = {
     new: {
       label: "Yeni",
-      className: "bg-gray-100 text-gray-700",
+      className:
+        "bg-gray-100 text-gray-700",
     },
     preparing: {
       label: "Hazırlanıyor",
-      className: "bg-yellow-100 text-yellow-800",
+      className:
+        "bg-yellow-100 text-yellow-800",
     },
     shipped: {
       label: "Sevk Edildi",
-      className: "bg-blue-100 text-blue-800",
+      className:
+        "bg-blue-100 text-blue-800",
     },
     completed: {
       label: "Tamamlandı",
-      className: "bg-green-100 text-green-800",
+      className:
+        "bg-green-100 text-green-800",
     },
     cancelled: {
       label: "İptal",
-      className: "bg-red-100 text-red-800",
+      className:
+        "bg-red-100 text-red-800",
     },
   };
 
@@ -718,4 +753,3 @@ function StatusBadge({
     </span>
   );
 }
-

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
@@ -39,6 +39,29 @@ type Purchase = {
   total: number;
   notes: string | null;
   created_at: string;
+};
+
+type CashAccount = {
+  id: string;
+  name: string;
+  balance: number;
+  is_active: boolean;
+};
+
+type BankAccount = {
+  id: string;
+  bank_name: string;
+  account_name: string;
+  iban: string | null;
+  balance: number;
+  is_active: boolean;
+};
+
+type PaymentAccount = {
+  id: string;
+  type: "cash" | "bank";
+  name: string;
+  balance: number;
 };
 
 function formatMoney(value: number) {
@@ -130,6 +153,12 @@ export default function SupplierDetailPage() {
   const [purchases, setPurchases] =
     useState<Purchase[]>([]);
 
+  const [cashAccounts, setCashAccounts] =
+    useState<CashAccount[]>([]);
+
+  const [bankAccounts, setBankAccounts] =
+    useState<BankAccount[]>([]);
+
   const [loading, setLoading] =
     useState(true);
 
@@ -139,14 +168,25 @@ export default function SupplierDetailPage() {
   const [error, setError] =
     useState("");
 
+  const [success, setSuccess] =
+    useState("");
+
   const [showPaymentModal, setShowPaymentModal] =
     useState(false);
 
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
-    payment_method: "Havale / EFT",
+    payment_method: "Nakit",
+    account_type: "cash" as "cash" | "bank",
+    account_id: "",
     note: "",
   });
+
+  /*
+   * =========================================================
+   * VERİLERİ YÜKLE
+   * =========================================================
+   */
 
   async function loadData() {
     setLoading(true);
@@ -156,6 +196,8 @@ export default function SupplierDetailPage() {
       supplierResult,
       transactionResult,
       purchaseResult,
+      cashResult,
+      bankResult,
     ] = await Promise.all([
       supabase
         .from("suppliers")
@@ -180,6 +222,22 @@ export default function SupplierDetailPage() {
         .order("created_at", {
           ascending: false,
         }),
+
+      supabase
+        .from("cash_accounts")
+        .select(
+          "id, name, balance, is_active"
+        )
+        .eq("is_active", true)
+        .order("name"),
+
+      supabase
+        .from("bank_accounts")
+        .select(
+          "id, bank_name, account_name, iban, balance, is_active"
+        )
+        .eq("is_active", true)
+        .order("bank_name"),
     ]);
 
     if (supplierResult.error) {
@@ -203,6 +261,24 @@ export default function SupplierDetailPage() {
       return;
     }
 
+    if (cashResult.error) {
+      console.error(cashResult.error);
+      setError(
+        `Kasa hesapları yüklenemedi: ${cashResult.error.message}`
+      );
+      setLoading(false);
+      return;
+    }
+
+    if (bankResult.error) {
+      console.error(bankResult.error);
+      setError(
+        `Banka hesapları yüklenemedi: ${bankResult.error.message}`
+      );
+      setLoading(false);
+      return;
+    }
+
     setSupplier(
       supplierResult.data as Supplier
     );
@@ -213,6 +289,14 @@ export default function SupplierDetailPage() {
 
     setPurchases(
       (purchaseResult.data || []) as Purchase[]
+    );
+
+    setCashAccounts(
+      (cashResult.data || []) as CashAccount[]
+    );
+
+    setBankAccounts(
+      (bankResult.data || []) as BankAccount[]
     );
 
     setLoading(false);
@@ -226,27 +310,41 @@ export default function SupplierDetailPage() {
 
   /*
    * =========================================================
-   * TEDARİKÇİ CARİ HESAP MANTIĞI
+   * ÖDEME HESAPLARI
    * =========================================================
-   *
-   * purchase:
-   * Tedarikçiye borç oluşturur.
-   *
-   * payment:
-   * Tedarikçiye yaptığımız gerçek ödemedir.
-   *
-   * refund:
-   * İptal edilen alışın cari geri alma hareketidir.
-   *
-   * adjustment_debit:
-   * Ek borç oluşturur.
-   *
-   * adjustment_credit:
-   * Borcu azaltır / tedarikçiden alacağımızı artırır.
    */
 
-  // Geçmişte oluşturulan bütün alışların toplamı.
-  // İptal edilen alışlar da burada görünür.
+  const paymentAccounts = useMemo<PaymentAccount[]>(
+    () => [
+      ...cashAccounts.map((account) => ({
+        id: account.id,
+        type: "cash" as const,
+        name: `Kasa - ${account.name}`,
+        balance: Number(account.balance) || 0,
+      })),
+      ...bankAccounts.map((account) => ({
+        id: account.id,
+        type: "bank" as const,
+        name: `Banka - ${account.bank_name} / ${account.account_name}`,
+        balance: Number(account.balance) || 0,
+      })),
+    ],
+    [cashAccounts, bankAccounts]
+  );
+
+  const selectedPaymentAccount =
+    paymentAccounts.find(
+      (account) =>
+        account.id === paymentForm.account_id &&
+        account.type === paymentForm.account_type
+    );
+
+  /*
+   * =========================================================
+   * TEDARİKÇİ CARİ HESAP MANTIĞI
+   * =========================================================
+   */
+
   const totalPurchases = transactions
     .filter(
       (item) =>
@@ -258,8 +356,6 @@ export default function SupplierDetailPage() {
       0
     );
 
-  // Tedarikçiye gerçekten yapılan ödemeler.
-  // İadeler burada KESİNLİKLE sayılmaz.
   const totalPayments = transactions
     .filter(
       (item) =>
@@ -271,7 +367,6 @@ export default function SupplierDetailPage() {
       0
     );
 
-  // İptal/iade hareketlerinin toplamı.
   const totalRefunds = transactions
     .filter(
       (item) =>
@@ -283,7 +378,6 @@ export default function SupplierDetailPage() {
       0
     );
 
-  // Ek borç düzeltmeleri.
   const totalDebitAdjustments = transactions
     .filter(
       (item) =>
@@ -296,7 +390,6 @@ export default function SupplierDetailPage() {
       0
     );
 
-  // Alacak düzeltmeleri.
   const totalCreditAdjustments = transactions
     .filter(
       (item) =>
@@ -309,23 +402,18 @@ export default function SupplierDetailPage() {
       0
     );
 
-  // İadeler düşüldükten sonraki gerçek alış.
   const netPurchases =
     totalPurchases - totalRefunds;
 
-  // Cari hesabın toplam borç tarafı.
   const totalDebt =
     totalPurchases +
     totalDebitAdjustments;
 
-  // Cari hesabın toplam alacak tarafı.
   const totalCredit =
     totalPayments +
     totalRefunds +
     totalCreditAdjustments;
 
-  // Pozitifse tedarikçiye borçluyuz.
-  // Negatifse tedarikçiden alacağımız var.
   const netBalance =
     totalDebt - totalCredit;
 
@@ -335,7 +423,6 @@ export default function SupplierDetailPage() {
   const supplierReceivable =
     Math.max(-netBalance, 0);
 
-  // Aktif, yani iptal edilmemiş alışlar.
   const activePurchases =
     purchases.filter(
       (purchase) =>
@@ -345,8 +432,97 @@ export default function SupplierDetailPage() {
   const activePurchaseCount =
     activePurchases.length;
 
+  /*
+   * =========================================================
+   * ÖDEME MODALINI AÇ
+   * =========================================================
+   */
+
+  function openPaymentModal() {
+    setError("");
+    setSuccess("");
+
+    const firstCash = cashAccounts[0];
+
+    const firstBank = bankAccounts[0];
+
+    let accountType: "cash" | "bank" = "cash";
+    let accountId = "";
+
+    if (firstCash) {
+      accountType = "cash";
+      accountId = firstCash.id;
+    } else if (firstBank) {
+      accountType = "bank";
+      accountId = firstBank.id;
+    }
+
+    setPaymentForm({
+      amount: "",
+      payment_method:
+        accountType === "cash"
+          ? "Nakit"
+          : "Havale / EFT",
+      account_type: accountType,
+      account_id: accountId,
+      note: "",
+    });
+
+    setShowPaymentModal(true);
+  }
+
+  /*
+   * =========================================================
+   * HESAP TÜRÜ DEĞİŞTİR
+   * =========================================================
+   */
+
+  function handlePaymentMethodChange(
+    method: string
+  ) {
+    const isCash = method === "Nakit";
+
+    const targetType: "cash" | "bank" =
+      isCash ? "cash" : "bank";
+
+    const availableAccounts =
+      targetType === "cash"
+        ? cashAccounts
+        : bankAccounts;
+
+    setPaymentForm((current) => ({
+      ...current,
+      payment_method: method,
+      account_type: targetType,
+      account_id:
+        availableAccounts[0]?.id || "",
+    }));
+  }
+
+  /*
+   * =========================================================
+   * HESAP DEĞİŞTİR
+   * =========================================================
+   */
+
+  function handleAccountChange(
+    accountId: string
+  ) {
+    setPaymentForm((current) => ({
+      ...current,
+      account_id: accountId,
+    }));
+  }
+
+  /*
+   * =========================================================
+   * TEDARİKÇİYE ÖDEME
+   * =========================================================
+   */
+
   async function addPayment() {
     setError("");
+    setSuccess("");
 
     const amount = Number(
       paymentForm.amount
@@ -366,17 +542,53 @@ export default function SupplierDetailPage() {
       return;
     }
 
+    if (!paymentForm.account_id) {
+      setError(
+        "Lütfen ödemenin çıkacağı kasa veya banka hesabını seç."
+      );
+      return;
+    }
+
+    if (!selectedPaymentAccount) {
+      setError(
+        "Seçilen ödeme hesabı bulunamadı."
+      );
+      return;
+    }
+
+    if (
+      amount >
+      selectedPaymentAccount.balance
+    ) {
+      setError(
+        `Seçilen hesapta yeterli bakiye yok. Mevcut bakiye: ${formatMoney(
+          selectedPaymentAccount.balance
+        )}`
+      );
+      return;
+    }
+
     setSavingPayment(true);
 
-    const { data: paymentId, error: paymentError } =
-  await supabase.rpc("add_supplier_payment", {
-    p_supplier_id: supplierId,
-    p_amount: amount,
-    p_payment_method: paymentForm.payment_method,
-    p_note:
-      paymentForm.note.trim() ||
-      "Tedarikçiye ödeme yapıldı.",
-  });
+    const {
+      data: paymentId,
+      error: paymentError,
+    } = await supabase.rpc(
+      "add_supplier_payment",
+      {
+        p_supplier_id: supplierId,
+        p_amount: amount,
+        p_payment_method:
+          paymentForm.payment_method,
+        p_note:
+          paymentForm.note.trim() ||
+          "Tedarikçiye ödeme yapıldı.",
+        p_account_type:
+          paymentForm.account_type,
+        p_account_id:
+          paymentForm.account_id,
+      }
+    );
 
     if (paymentError) {
       console.error(paymentError);
@@ -385,17 +597,37 @@ export default function SupplierDetailPage() {
       return;
     }
 
+    console.log(
+      "Tedarikçi ödeme işlemi başarılı:",
+      paymentId
+    );
+
     setPaymentForm({
       amount: "",
-      payment_method: "Havale / EFT",
+      payment_method: "Nakit",
+      account_type: "cash",
+      account_id: "",
       note: "",
     });
 
     setShowPaymentModal(false);
+
+    setSuccess(
+      `${formatMoney(
+        amount
+      )} tedarikçi ödemesi başarıyla kaydedildi.`
+    );
+
     setSavingPayment(false);
 
     await loadData();
   }
+
+  /*
+   * =========================================================
+   * YÜKLENİYOR
+   * =========================================================
+   */
 
   if (loading) {
     return (
@@ -407,6 +639,12 @@ export default function SupplierDetailPage() {
     );
   }
 
+  /*
+   * =========================================================
+   * TEDARİKÇİ BULUNAMADI
+   * =========================================================
+   */
+
   if (!supplier) {
     return (
       <main className="min-h-screen bg-slate-50 p-4 md:p-6">
@@ -417,11 +655,20 @@ export default function SupplierDetailPage() {
     );
   }
 
+  const availablePaymentAccounts =
+  paymentAccounts.filter(
+    (account) =>
+      account.type === paymentForm.account_type
+  );
+
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
 
-        {/* HEADER */}
+        {/* =====================================================
+            HEADER
+        ===================================================== */}
+
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
 
           <div>
@@ -446,13 +693,12 @@ export default function SupplierDetailPage() {
           <div className="flex flex-wrap gap-2">
 
             <button
-  onClick={() =>
-    setShowPaymentModal(true)
-  }
-  className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
->
-  + Tedarikçiye Ödeme
-</button>
+              onClick={openPaymentModal}
+              disabled={currentDebt <= 0}
+              className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              + Tedarikçiye Ödeme
+            </button>
 
             <button
               onClick={() =>
@@ -468,7 +714,10 @@ export default function SupplierDetailPage() {
           </div>
         </div>
 
-        {/* ERROR */}
+        {/* =====================================================
+            ERROR
+        ===================================================== */}
+
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             <div className="font-bold">
@@ -481,7 +730,26 @@ export default function SupplierDetailPage() {
           </div>
         )}
 
-        {/* SUMMARY */}
+        {/* =====================================================
+            SUCCESS
+        ===================================================== */}
+
+        {success && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+            <div className="font-bold">
+              İşlem başarılı.
+            </div>
+
+            <div className="mt-1">
+              {success}
+            </div>
+          </div>
+        )}
+
+        {/* =====================================================
+            SUMMARY
+        ===================================================== */}
+
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
 
           {/* TOPLAM ALIŞ */}
@@ -588,8 +856,12 @@ export default function SupplierDetailPage() {
 
         </section>
 
-        {/* PURCHASE COUNT */}
+        {/* =====================================================
+            PURCHASE COUNT
+        ===================================================== */}
+
         <div className="flex flex-wrap items-center gap-3">
+
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
             <span className="text-sm text-slate-500">
               Aktif Alış Sayısı:
@@ -607,12 +879,17 @@ export default function SupplierDetailPage() {
               {purchases.length}
             </strong>
           </div>
+
         </div>
 
-        {/* SUPPLIER INFO */}
+        {/* =====================================================
+            SUPPLIER INFO
+        ===================================================== */}
+
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
           <div className="mb-5 flex items-center justify-between">
+
             <div>
               <h2 className="text-lg font-bold text-slate-900">
                 Firma Bilgileri
@@ -632,6 +909,7 @@ export default function SupplierDetailPage() {
                 Pasif
               </span>
             )}
+
           </div>
 
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -739,7 +1017,10 @@ export default function SupplierDetailPage() {
 
         </section>
 
-        {/* PURCHASE HISTORY */}
+        {/* =====================================================
+            PURCHASE HISTORY
+        ===================================================== */}
+
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
 
           <div className="border-b border-slate-200 p-5">
@@ -847,7 +1128,10 @@ export default function SupplierDetailPage() {
 
         </section>
 
-        {/* ACCOUNT HISTORY */}
+        {/* =====================================================
+            ACCOUNT HISTORY
+        ===================================================== */}
+
         <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
 
           <div className="border-b border-slate-200 p-5">
@@ -965,11 +1249,16 @@ export default function SupplierDetailPage() {
 
         </section>
 
-        {/* PAYMENT MODAL */}
+        {/* =====================================================
+            PAYMENT MODAL
+        ===================================================== */}
+
         {showPaymentModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
 
             <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+
+              {/* HEADER */}
 
               <div className="flex items-center justify-between border-b border-slate-200 p-5">
 
@@ -980,7 +1269,7 @@ export default function SupplierDetailPage() {
 
                   <p className="mt-1 text-xs text-slate-500">
                     Mevcut borç:{" "}
-                    <strong>
+                    <strong className="text-orange-600">
                       {formatMoney(
                         currentDebt
                       )}
@@ -989,9 +1278,12 @@ export default function SupplierDetailPage() {
                 </div>
 
                 <button
-                  onClick={() =>
-                    setShowPaymentModal(false)
-                  }
+                  type="button"
+                  onClick={() => {
+                    if (!savingPayment) {
+                      setShowPaymentModal(false);
+                    }
+                  }}
                   className="text-xl text-slate-400 hover:text-slate-700"
                 >
                   ×
@@ -1000,6 +1292,8 @@ export default function SupplierDetailPage() {
               </div>
 
               <div className="space-y-4 p-5">
+
+                {/* ÖDEME TUTARI */}
 
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
@@ -1010,6 +1304,7 @@ export default function SupplierDetailPage() {
                     type="number"
                     min="0"
                     step="0.01"
+                    max={currentDebt}
                     value={
                       paymentForm.amount
                     }
@@ -1023,11 +1318,21 @@ export default function SupplierDetailPage() {
                     placeholder="0,00"
                     className="w-full rounded-xl border border-slate-300 px-3 py-3 text-sm outline-none focus:border-slate-500"
                   />
+
+                  <div className="mt-1 text-xs text-slate-400">
+                    En fazla{" "}
+                    {formatMoney(
+                      currentDebt
+                    )}{" "}
+                    ödeme yapabilirsin.
+                  </div>
                 </div>
+
+                {/* ÖDEME YÖNTEMİ */}
 
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
-                    Ödeme Yöntemi
+                    Ödeme Yöntemi *
                   </label>
 
                   <select
@@ -1035,24 +1340,98 @@ export default function SupplierDetailPage() {
                       paymentForm.payment_method
                     }
                     onChange={(e) =>
-                      setPaymentForm({
-                        ...paymentForm,
-                        payment_method:
-                          e.target.value,
-                      })
+                      handlePaymentMethodChange(
+                        e.target.value
+                      )
                     }
                     className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-slate-500"
                   >
-                    <option>Nakit</option>
-                    <option>
+                    <option value="Nakit">
+                      Nakit
+                    </option>
+
+                    <option value="Havale / EFT">
                       Havale / EFT
                     </option>
-                    <option>
-                      Kredi Kartı
-                    </option>
-                    <option>Çek</option>
                   </select>
                 </div>
+
+                {/* ÖDEME HESABI */}
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-500">
+                    Ödemenin Çıkacağı Hesap *
+                  </label>
+
+                  <select
+                    value={
+                      paymentForm.account_id
+                    }
+                    onChange={(e) =>
+                      handleAccountChange(
+                        e.target.value
+                      )
+                    }
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm outline-none focus:border-slate-500"
+                  >
+
+                    <option value="">
+                      Hesap seç...
+                    </option>
+
+                    {availablePaymentAccounts.map(
+  (account) => (
+    <option
+      key={account.id}
+      value={account.id}
+    >
+      {account.name}
+      {" — "}
+      {formatMoney(account.balance)}
+    </option>
+  )
+)}
+
+                  </select>
+
+                  {availablePaymentAccounts.length ===
+                    0 && (
+                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                      {paymentForm.account_type ===
+                      "cash"
+                        ? "Aktif kasa hesabı bulunmuyor."
+                        : "Aktif banka hesabı bulunmuyor."}
+                    </div>
+                  )}
+
+                  {selectedPaymentAccount && (
+                    <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
+
+                      <span className="text-slate-500">
+                        Mevcut bakiye
+                      </span>
+
+                      <strong
+                        className={
+                          selectedPaymentAccount.balance >=
+                          Number(
+                            paymentForm.amount
+                          )
+                            ? "text-emerald-600"
+                            : "text-red-600"
+                        }
+                      >
+                        {formatMoney(
+                          selectedPaymentAccount.balance
+                        )}
+                      </strong>
+
+                    </div>
+                  )}
+
+                </div>
+
+                {/* AÇIKLAMA */}
 
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-500">
@@ -1075,28 +1454,111 @@ export default function SupplierDetailPage() {
                   />
                 </div>
 
+                {/* ÖZET */}
+
+                {Number(
+                  paymentForm.amount
+                ) > 0 &&
+                  selectedPaymentAccount && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
+                      <div className="flex items-center justify-between text-sm">
+
+                        <span className="text-slate-500">
+                          Ödeme
+                        </span>
+
+                        <strong className="text-slate-900">
+                          {formatMoney(
+                            Number(
+                              paymentForm.amount
+                            )
+                          )}
+                        </strong>
+
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between text-sm">
+
+                        <span className="text-slate-500">
+                          Hesap
+                        </span>
+
+                        <span className="max-w-[220px] truncate text-right font-semibold text-slate-700">
+                          {
+                            selectedPaymentAccount.name
+                          }
+                        </span>
+
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-sm">
+
+                        <span className="text-slate-500">
+                          İşlem sonrası bakiye
+                        </span>
+
+                        <strong
+                          className={
+                            selectedPaymentAccount.balance -
+                              Number(
+                                paymentForm.amount
+                              ) >=
+                            0
+                              ? "text-emerald-600"
+                              : "text-red-600"
+                          }
+                        >
+                          {formatMoney(
+                            selectedPaymentAccount.balance -
+                              Number(
+                                paymentForm.amount
+                              )
+                          )}
+                        </strong>
+
+                      </div>
+
+                    </div>
+                  )}
+
               </div>
+
+              {/* FOOTER */}
 
               <div className="flex justify-end gap-3 border-t border-slate-200 p-5">
 
                 <button
-                  onClick={() =>
-                    setShowPaymentModal(false)
-                  }
-                  className="rounded-xl bg-slate-100 px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200"
+                  type="button"
+                  onClick={() => {
+                    if (!savingPayment) {
+                      setShowPaymentModal(false);
+                    }
+                  }}
+                  disabled={savingPayment}
+                  className="rounded-xl bg-slate-100 px-5 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Vazgeç
                 </button>
 
                 <button
-  onClick={addPayment}
-  disabled={savingPayment}
-  className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
->
-  {savingPayment
-    ? "Kaydediliyor..."
-    : "Ödemeyi Kaydet"}
-</button>
+                  type="button"
+                  onClick={addPayment}
+                  disabled={
+                    savingPayment ||
+                    currentDebt <= 0 ||
+                    !paymentForm.amount ||
+                    !paymentForm.account_id ||
+                    availablePaymentAccounts.length ===
+                      0
+                  }
+                  className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingPayment
+                    ? "Kaydediliyor..."
+                    : "Ödemeyi Kaydet"}
+                </button>
+
               </div>
 
             </div>
@@ -1107,4 +1569,3 @@ export default function SupplierDetailPage() {
     </main>
   );
 }
-
