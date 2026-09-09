@@ -49,92 +49,97 @@ type CustomerBalance = Customer & {
   balance: number;
 };
 
-type BalanceFilter =
-  | "all"
-  | "debt"
-  | "credit"
-  | "closed";
+type BalanceFilter = "all" | "debt" | "credit" | "closed";
 
-type PaymentMethod =
-  | "Nakit"
-  | "Havale"
-  | "EFT";
+type PaymentMethod = "Nakit" | "Havale" | "EFT";
 
 export default function CariPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [transactions, setTransactions] =
-    useState<AccountTransaction[]>([]);
+  const [transactions, setTransactions] = useState<AccountTransaction[]>([]);
+  const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
-  const [cashAccounts, setCashAccounts] =
-    useState<CashAccount[]>([]);
-
-  const [bankAccounts, setBankAccounts] =
-    useState<BankAccount[]>([]);
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [loadingAccounts, setLoadingAccounts] =
-    useState(false);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const [selectedCustomer, setSelectedCustomer] =
     useState<CustomerBalance | null>(null);
 
-  const [showPaymentModal, setShowPaymentModal] =
-    useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showRefundModal, setShowRefundModal] = useState(false);
 
-  const [showRefundModal, setShowRefundModal] =
-    useState(false);
-
-  const [paymentAmount, setPaymentAmount] =
-    useState("");
-
+  const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>("Nakit");
+  const [paymentNote, setPaymentNote] = useState("");
 
-  const [paymentNote, setPaymentNote] =
-    useState("");
-
-  const [refundAmount, setRefundAmount] =
-    useState("");
-
+  const [refundAmount, setRefundAmount] = useState("");
   const [refundPaymentMethod, setRefundPaymentMethod] =
     useState<PaymentMethod>("Nakit");
-
-  const [refundNote, setRefundNote] =
-    useState("");
+  const [refundNote, setRefundNote] = useState("");
 
   const [selectedCashAccountId, setSelectedCashAccountId] =
     useState("");
-
   const [selectedBankAccountId, setSelectedBankAccountId] =
     useState("");
 
   const [selectedRefundCashAccountId, setSelectedRefundCashAccountId] =
     useState("");
-
   const [selectedRefundBankAccountId, setSelectedRefundBankAccountId] =
     useState("");
 
-  const [savingPayment, setSavingPayment] =
-    useState(false);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [savingRefund, setSavingRefund] = useState(false);
 
-  const [savingRefund, setSavingRefund] =
-    useState(false);
-
-  const [search, setSearch] =
-    useState("");
-
+  const [search, setSearch] = useState("");
   const [balanceFilter, setBalanceFilter] =
     useState<BalanceFilter>("all");
+
+  const [transactionFilter, setTransactionFilter] =
+    useState("all");
 
   useEffect(() => {
     loadCari();
   }, []);
 
-  async function loadCari() {
-    setLoading(true);
-    setLoadingAccounts(true);
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+
+      if (showPaymentModal && !savingPayment) {
+        setShowPaymentModal(false);
+        return;
+      }
+
+      if (showRefundModal && !savingRefund) {
+        setShowRefundModal(false);
+        return;
+      }
+
+      if (selectedCustomer) {
+        setSelectedCustomer(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [
+    showPaymentModal,
+    showRefundModal,
+    selectedCustomer,
+    savingPayment,
+    savingRefund,
+  ]);
+
+  async function loadCari(showRefresh = false) {
+    if (showRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
 
     const [
       customersResult,
@@ -212,205 +217,142 @@ export default function CariPage() {
     ]);
 
     if (customersResult.error) {
-      console.error(
-        "CUSTOMERS ERROR:",
-        customersResult.error
-      );
+      console.error(customersResult.error);
 
       alert(
         `Müşteriler yüklenemedi.\n\n${customersResult.error.message}`
       );
 
       setLoading(false);
-      setLoadingAccounts(false);
+      setRefreshing(false);
       return;
     }
 
     if (transactionsResult.error) {
-      console.error(
-        "TRANSACTIONS ERROR:",
-        transactionsResult.error
-      );
+      console.error(transactionsResult.error);
 
       alert(
         `Cari hareketleri yüklenemedi.\n\n${transactionsResult.error.message}`
       );
 
       setLoading(false);
-      setLoadingAccounts(false);
+      setRefreshing(false);
       return;
     }
 
     if (cashAccountsResult.error) {
-      console.error(
-        "CASH ACCOUNTS ERROR:",
-        cashAccountsResult.error
-      );
-
-      alert(
-        `Kasa hesapları yüklenemedi.\n\n${cashAccountsResult.error.message}\n\nSupabase RLS politikalarını kontrol edin.`
-      );
+      console.error(cashAccountsResult.error);
 
       setCashAccounts([]);
-    } else {
-      const normalizedCashAccounts: CashAccount[] =
-        (cashAccountsResult.data || []).map(
-          (account) => ({
-            id: account.id,
-            name: account.name,
-            balance: Number(
-              account.balance || 0
-            ),
-            is_active: Boolean(
-              account.is_active
-            ),
-          })
-        );
 
+      console.warn(
+        "Kasa hesapları yüklenemedi:",
+        cashAccountsResult.error.message
+      );
+    } else {
       setCashAccounts(
-        normalizedCashAccounts
+        (cashAccountsResult.data || []).map((account) => ({
+          id: account.id,
+          name: account.name,
+          balance: Number(account.balance || 0),
+          is_active: Boolean(account.is_active),
+        }))
       );
     }
 
     if (bankAccountsResult.error) {
-      console.error(
-        "BANK ACCOUNTS ERROR:",
-        bankAccountsResult.error
-      );
-
-      alert(
-        `Banka hesapları yüklenemedi.\n\n${bankAccountsResult.error.message}\n\nSupabase RLS politikalarını kontrol edin.`
-      );
+      console.error(bankAccountsResult.error);
 
       setBankAccounts([]);
-    } else {
-      const normalizedBankAccounts: BankAccount[] =
-        (bankAccountsResult.data || []).map(
-          (account) => ({
-            id: account.id,
-            bank_name: account.bank_name,
-            account_name:
-              account.account_name,
-            iban: account.iban,
-            balance: Number(
-              account.balance || 0
-            ),
-            is_active: Boolean(
-              account.is_active
-            ),
-          })
-        );
 
+      console.warn(
+        "Banka hesapları yüklenemedi:",
+        bankAccountsResult.error.message
+      );
+    } else {
       setBankAccounts(
-        normalizedBankAccounts
+        (bankAccountsResult.data || []).map((account) => ({
+          id: account.id,
+          bank_name: account.bank_name,
+          account_name: account.account_name,
+          iban: account.iban,
+          balance: Number(account.balance || 0),
+          is_active: Boolean(account.is_active),
+        }))
       );
     }
 
-    setCustomers(
-      (customersResult.data ||
-        []) as Customer[]
-    );
+    setCustomers((customersResult.data || []) as Customer[]);
 
     setTransactions(
       (transactionsResult.data || []).map(
         (transaction: AccountTransaction) => ({
           id: transaction.id,
-          customer_id:
-            transaction.customer_id,
-          transaction_type:
-            transaction.transaction_type,
-          amount: Number(
-            transaction.amount || 0
-          ),
-          reference_id:
-            transaction.reference_id || null,
-          payment_method:
-            transaction.payment_method ||
-            null,
-          note:
-            transaction.note || null,
-          created_at:
-            transaction.created_at,
+          customer_id: transaction.customer_id,
+          transaction_type: transaction.transaction_type,
+          amount: Number(transaction.amount || 0),
+          reference_id: transaction.reference_id || null,
+          payment_method: transaction.payment_method || null,
+          note: transaction.note || null,
+          created_at: transaction.created_at,
         })
       )
     );
 
     setLoading(false);
-    setLoadingAccounts(false);
+    setRefreshing(false);
   }
 
   const customerBalances = useMemo(() => {
     return customers.map((customer) => {
-      const customerTransactions =
-        transactions.filter(
+      const customerTransactions = transactions.filter(
+        (transaction) =>
+          transaction.customer_id === customer.id
+      );
+
+      const sales = customerTransactions
+        .filter(
           (transaction) =>
-            transaction.customer_id ===
-            customer.id
+            transaction.transaction_type === "sale"
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum + Number(transaction.amount || 0),
+          0
         );
 
-      const sales =
-        customerTransactions
-          .filter(
-            (transaction) =>
-              transaction.transaction_type ===
-              "sale"
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.amount || 0
-              ),
-            0
-          );
+      const payments = customerTransactions
+        .filter(
+          (transaction) =>
+            transaction.transaction_type === "payment"
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum + Number(transaction.amount || 0),
+          0
+        );
 
-      const payments =
-        customerTransactions
-          .filter(
-            (transaction) =>
-              transaction.transaction_type ===
-              "payment"
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.amount || 0
-              ),
-            0
-          );
+      const refunds = customerTransactions
+        .filter(
+          (transaction) =>
+            transaction.transaction_type === "refund"
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum + Number(transaction.amount || 0),
+          0
+        );
 
-      const refunds =
-        customerTransactions
-          .filter(
-            (transaction) =>
-              transaction.transaction_type ===
-              "refund"
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.amount || 0
-              ),
-            0
-          );
-
-      const customerRefunds =
-        customerTransactions
-          .filter(
-            (transaction) =>
-              transaction.transaction_type ===
-              "customer_refund"
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.amount || 0
-              ),
-            0
-          );
+      const customerRefunds = customerTransactions
+        .filter(
+          (transaction) =>
+            transaction.transaction_type === "customer_refund"
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum + Number(transaction.amount || 0),
+          0
+        );
 
       const balance =
         sales -
@@ -434,147 +376,192 @@ export default function CariPage() {
       .trim()
       .toLocaleLowerCase("tr-TR");
 
-    return customerBalances.filter(
-      (customer) => {
-        const matchesSearch =
-          !query ||
-          customer.company_name
-            .toLocaleLowerCase(
-              "tr-TR"
-            )
-            .includes(query) ||
-          customer.contact_name
-            ?.toLocaleLowerCase(
-              "tr-TR"
-            )
-            .includes(query) ||
-          customer.phone?.includes(
-            query
-          ) ||
-          customer.city
-            ?.toLocaleLowerCase(
-              "tr-TR"
-            )
-            .includes(query);
+    return customerBalances.filter((customer) => {
+      const matchesSearch =
+        !query ||
+        customer.company_name
+          .toLocaleLowerCase("tr-TR")
+          .includes(query) ||
+        customer.contact_name
+          ?.toLocaleLowerCase("tr-TR")
+          .includes(query) ||
+        customer.phone?.includes(query) ||
+        customer.city
+          ?.toLocaleLowerCase("tr-TR")
+          .includes(query);
 
-        if (!matchesSearch) {
-          return false;
-        }
-
-        if (balanceFilter === "debt") {
-          return customer.balance > 0;
-        }
-
-        if (balanceFilter === "credit") {
-          return customer.balance < 0;
-        }
-
-        if (balanceFilter === "closed") {
-          return customer.balance === 0;
-        }
-
-        return true;
+      if (!matchesSearch) {
+        return false;
       }
-    );
+
+      if (
+        balanceFilter === "debt" &&
+        customer.balance <= 0
+      ) {
+        return false;
+      }
+
+      if (
+        balanceFilter === "credit" &&
+        customer.balance >= 0
+      ) {
+        return false;
+      }
+
+      if (
+        balanceFilter === "closed" &&
+        customer.balance !== 0
+      ) {
+        return false;
+      }
+
+      return true;
+    });
   }, [
     customerBalances,
     search,
     balanceFilter,
   ]);
 
-  const totalSales = useMemo(() => {
-    return customerBalances.reduce(
-      (sum, customer) =>
-        sum + customer.sales,
-      0
-    );
-  }, [customerBalances]);
+  const totalSales = useMemo(
+    () =>
+      customerBalances.reduce(
+        (sum, customer) => sum + customer.sales,
+        0
+      ),
+    [customerBalances]
+  );
 
-  const totalPayments = useMemo(() => {
-    return customerBalances.reduce(
-      (sum, customer) =>
-        sum + customer.payments,
-      0
-    );
-  }, [customerBalances]);
+  const totalPayments = useMemo(
+    () =>
+      customerBalances.reduce(
+        (sum, customer) => sum + customer.payments,
+        0
+      ),
+    [customerBalances]
+  );
 
-  const totalRefunds = useMemo(() => {
-    return customerBalances.reduce(
-      (sum, customer) =>
-        sum + customer.refunds,
-      0
-    );
-  }, [customerBalances]);
+  const totalRefunds = useMemo(
+    () =>
+      customerBalances.reduce(
+        (sum, customer) => sum + customer.refunds,
+        0
+      ),
+    [customerBalances]
+  );
 
-  const totalCustomerDebt = useMemo(() => {
-    return customerBalances.reduce(
-      (sum, customer) =>
-        sum +
-        Math.max(
-          customer.balance,
-          0
-        ),
-      0
-    );
-  }, [customerBalances]);
+  const totalCustomerRefunds = useMemo(
+    () =>
+      customerBalances.reduce(
+        (sum, customer) =>
+          sum + customer.customerRefunds,
+        0
+      ),
+    [customerBalances]
+  );
 
-  const totalCustomerCredit = useMemo(() => {
-    return customerBalances.reduce(
-      (sum, customer) =>
-        sum +
-        Math.max(
-          -customer.balance,
-          0
-        ),
-      0
-    );
-  }, [customerBalances]);
+  const totalCustomerDebt = useMemo(
+    () =>
+      customerBalances.reduce(
+        (sum, customer) =>
+          sum + Math.max(customer.balance, 0),
+        0
+      ),
+    [customerBalances]
+  );
 
-  const debtCustomerCount = useMemo(() => {
-    return customerBalances.filter(
-      (customer) =>
-        customer.balance > 0
-    ).length;
-  }, [customerBalances]);
+  const totalCustomerCredit = useMemo(
+    () =>
+      customerBalances.reduce(
+        (sum, customer) =>
+          sum + Math.max(-customer.balance, 0),
+        0
+      ),
+    [customerBalances]
+  );
 
-  const creditCustomerCount = useMemo(() => {
-    return customerBalances.filter(
-      (customer) =>
-        customer.balance < 0
-    ).length;
-  }, [customerBalances]);
+  const debtCustomerCount = useMemo(
+    () =>
+      customerBalances.filter(
+        (customer) => customer.balance > 0
+      ).length,
+    [customerBalances]
+  );
 
-  const closedCustomerCount = useMemo(() => {
-    return customerBalances.filter(
-      (customer) =>
-        customer.balance === 0
-    ).length;
-  }, [customerBalances]);
+  const creditCustomerCount = useMemo(
+    () =>
+      customerBalances.filter(
+        (customer) => customer.balance < 0
+      ).length,
+    [customerBalances]
+  );
+
+  const closedCustomerCount = useMemo(
+    () =>
+      customerBalances.filter(
+        (customer) => customer.balance === 0
+      ).length,
+    [customerBalances]
+  );
+
+  const totalCash = useMemo(
+    () =>
+      cashAccounts.reduce(
+        (sum, account) =>
+          sum + Number(account.balance || 0),
+        0
+      ),
+    [cashAccounts]
+  );
+
+  const totalBank = useMemo(
+    () =>
+      bankAccounts.reduce(
+        (sum, account) =>
+          sum + Number(account.balance || 0),
+        0
+      ),
+    [bankAccounts]
+  );
+
+  const totalLiquidAssets =
+    totalCash + totalBank;
 
   function formatPrice(value: number) {
-    return Number(
-      value || 0
-    ).toLocaleString("tr-TR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    return Number(value || 0).toLocaleString(
+      "tr-TR",
+      {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }
+    );
   }
 
   function formatDate(value: string) {
-    return new Date(
-      value
-    ).toLocaleString("tr-TR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    return new Date(value).toLocaleString(
+      "tr-TR",
+      {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }
+    );
   }
 
-  function parsePaymentAmount(
-    value: string
-  ) {
+  function formatShortDate(value: string) {
+    return new Date(value).toLocaleDateString(
+      "tr-TR",
+      {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      }
+    );
+  }
+
+  function parsePaymentAmount(value: string) {
     const cleaned = value
       .trim()
       .replace(/\s/g, "");
@@ -601,9 +588,7 @@ export default function CariPage() {
     }
 
     if (cleaned.includes(".")) {
-      const parts =
-        cleaned.split(".");
-
+      const parts = cleaned.split(".");
       const lastPart =
         parts[parts.length - 1];
 
@@ -628,16 +613,12 @@ export default function CariPage() {
     switch (transactionType) {
       case "sale":
         return "Satış";
-
       case "payment":
         return "Tahsilat";
-
       case "refund":
-        return "İade";
-
+        return "Satış İadesi";
       case "customer_refund":
-        return "Para İadesi";
-
+        return "Müşteri İadesi";
       default:
         return transactionType;
     }
@@ -648,19 +629,15 @@ export default function CariPage() {
   ) {
     switch (transactionType) {
       case "sale":
-        return "bg-red-100 text-red-700";
-
+        return "bg-red-50 text-red-700 ring-red-200";
       case "payment":
-        return "bg-green-100 text-green-700";
-
+        return "bg-green-50 text-green-700 ring-green-200";
       case "refund":
-        return "bg-blue-100 text-blue-700";
-
+        return "bg-blue-50 text-blue-700 ring-blue-200";
       case "customer_refund":
-        return "bg-orange-100 text-orange-700";
-
+        return "bg-orange-50 text-orange-700 ring-orange-200";
       default:
-        return "bg-slate-100 text-slate-700";
+        return "bg-slate-50 text-slate-700 ring-slate-200";
     }
   }
 
@@ -668,25 +645,19 @@ export default function CariPage() {
     transaction: AccountTransaction
   ) {
     if (
-      transaction.transaction_type ===
-      "sale"
+      transaction.transaction_type === "sale"
     ) {
       return {
-        text: `+${formatPrice(
-          Number(transaction.amount)
-        )} ₺`,
+        text: `+${formatPrice(transaction.amount)} ₺`,
         className: "text-red-600",
       };
     }
 
     if (
-      transaction.transaction_type ===
-      "refund"
+      transaction.transaction_type === "refund"
     ) {
       return {
-        text: `-${formatPrice(
-          Number(transaction.amount)
-        )} ₺`,
+        text: `-${formatPrice(transaction.amount)} ₺`,
         className: "text-blue-600",
       };
     }
@@ -696,25 +667,66 @@ export default function CariPage() {
       "customer_refund"
     ) {
       return {
-        text: `+${formatPrice(
-          Number(transaction.amount)
-        )} ₺`,
+        text: `+${formatPrice(transaction.amount)} ₺`,
         className: "text-orange-600",
       };
     }
 
     return {
-      text: `-${formatPrice(
-        Number(transaction.amount)
-      )} ₺`,
+      text: `-${formatPrice(transaction.amount)} ₺`,
       className: "text-green-600",
     };
+  }
+
+  function getBalanceLabel(balance: number) {
+    if (balance > 0) {
+      return "Borçlu";
+    }
+
+    if (balance < 0) {
+      return "Alacaklı";
+    }
+
+    return "Kapalı";
+  }
+
+  function getBalanceColor(balance: number) {
+    if (balance > 0) {
+      return "red";
+    }
+
+    if (balance < 0) {
+      return "blue";
+    }
+
+    return "green";
+  }
+
+  function getLastTransaction(
+    customerId: string
+  ) {
+    return transactions.find(
+      (transaction) =>
+        transaction.customer_id === customerId
+    );
   }
 
   function openCustomer(
     customer: CustomerBalance
   ) {
     setSelectedCustomer(customer);
+    setTransactionFilter("all");
+  }
+
+  function closeCustomer() {
+    if (
+      showPaymentModal ||
+      showRefundModal
+    ) {
+      return;
+    }
+
+    setSelectedCustomer(null);
   }
 
   function openPaymentModal() {
@@ -726,24 +738,22 @@ export default function CariPage() {
     setPaymentMethod("Nakit");
     setPaymentNote("");
 
-    const firstCashAccount =
+    const firstCash =
       cashAccounts.find(
-        (account) =>
-          account.is_active
+        (account) => account.is_active
       );
 
-    const firstBankAccount =
+    const firstBank =
       bankAccounts.find(
-        (account) =>
-          account.is_active
+        (account) => account.is_active
       );
 
     setSelectedCashAccountId(
-      firstCashAccount?.id || ""
+      firstCash?.id || ""
     );
 
     setSelectedBankAccountId(
-      firstBankAccount?.id || ""
+      firstBank?.id || ""
     );
 
     setShowPaymentModal(true);
@@ -754,13 +764,12 @@ export default function CariPage() {
       return;
     }
 
-    const customerCredit =
-      Math.max(
-        -selectedCustomer.balance,
-        0
-      );
+    const availableCredit = Math.max(
+      -selectedCustomer.balance,
+      0
+    );
 
-    if (customerCredit <= 0) {
+    if (availableCredit <= 0) {
       alert(
         "Bu müşterinin iade edilecek alacağı bulunmuyor."
       );
@@ -768,7 +777,7 @@ export default function CariPage() {
     }
 
     setRefundAmount(
-      customerCredit
+      availableCredit
         .toFixed(2)
         .replace(".", ",")
     );
@@ -776,24 +785,22 @@ export default function CariPage() {
     setRefundPaymentMethod("Nakit");
     setRefundNote("");
 
-    const firstCashAccount =
+    const firstCash =
       cashAccounts.find(
-        (account) =>
-          account.is_active
+        (account) => account.is_active
       );
 
-    const firstBankAccount =
+    const firstBank =
       bankAccounts.find(
-        (account) =>
-          account.is_active
+        (account) => account.is_active
       );
 
     setSelectedRefundCashAccountId(
-      firstCashAccount?.id || ""
+      firstCash?.id || ""
     );
 
     setSelectedRefundBankAccountId(
-      firstBankAccount?.id || ""
+      firstBank?.id || ""
     );
 
     setShowRefundModal(true);
@@ -810,29 +817,25 @@ export default function CariPage() {
   const selectedCashAccount =
     cashAccounts.find(
       (account) =>
-        account.id ===
-        selectedCashAccountId
+        account.id === selectedCashAccountId
     );
 
   const selectedBankAccount =
     bankAccounts.find(
       (account) =>
-        account.id ===
-        selectedBankAccountId
+        account.id === selectedBankAccountId
     );
 
   const selectedRefundCashAccount =
     cashAccounts.find(
       (account) =>
-        account.id ===
-        selectedRefundCashAccountId
+        account.id === selectedRefundCashAccountId
     );
 
   const selectedRefundBankAccount =
     bankAccounts.find(
       (account) =>
-        account.id ===
-        selectedRefundBankAccountId
+        account.id === selectedRefundBankAccountId
     );
 
   const selectedPaymentAccountId =
@@ -846,14 +849,10 @@ export default function CariPage() {
       : selectedRefundBankAccountId;
 
   const hasRequiredPaymentAccount =
-    Boolean(
-      selectedPaymentAccountId
-    );
+    Boolean(selectedPaymentAccountId);
 
   const hasRequiredRefundAccount =
-    Boolean(
-      selectedRefundAccountId
-    );
+    Boolean(selectedRefundAccountId);
 
   async function addPayment() {
     if (!selectedCustomer) {
@@ -861,9 +860,7 @@ export default function CariPage() {
     }
 
     const amount =
-      parsePaymentAmount(
-        paymentAmount
-      );
+      parsePaymentAmount(paymentAmount);
 
     if (
       !Number.isFinite(amount) ||
@@ -885,8 +882,7 @@ export default function CariPage() {
     }
 
     if (
-      amount >
-      selectedCustomer.balance
+      amount > selectedCustomer.balance
     ) {
       const confirmed =
         window.confirm(
@@ -897,7 +893,7 @@ export default function CariPage() {
             `Tahsilat: ${formatPrice(
               amount
             )} ₺\n\n` +
-            "Fazla tahsilat girmek istediğinize emin misiniz?"
+            `Fazla tahsilat girmek istediğinize emin misiniz?`
         );
 
       if (!confirmed) {
@@ -905,27 +901,18 @@ export default function CariPage() {
       }
     }
 
-    if (
-      !hasRequiredPaymentAccount
-    ) {
-      if (
+    if (!hasRequiredPaymentAccount) {
+      alert(
         paymentMethod === "Nakit"
-      ) {
-        alert(
-          "Tahsilat için aktif bir kasa hesabı seçmelisiniz."
-        );
-      } else {
-        alert(
-          "Tahsilat için aktif bir banka hesabı seçmelisiniz."
-        );
-      }
-
+          ? "Tahsilat için aktif bir kasa hesabı seçmelisiniz."
+          : "Tahsilat için aktif bir banka hesabı seçmelisiniz."
+      );
       return;
     }
 
     setSavingPayment(true);
 
-    const { data, error } =
+    const { error } =
       await supabase.rpc(
         "add_customer_payment",
         {
@@ -935,8 +922,7 @@ export default function CariPage() {
           p_payment_method:
             paymentMethod,
           p_note:
-            paymentNote.trim() ||
-            null,
+            paymentNote.trim() || null,
           p_account_id:
             selectedPaymentAccountId,
         }
@@ -956,15 +942,10 @@ export default function CariPage() {
       return;
     }
 
-    console.log(
-      "TAHSİLAT SONUCU:",
-      data
-    );
-
     setSavingPayment(false);
     setShowPaymentModal(false);
 
-    await loadCari();
+    await loadCari(true);
 
     setSelectedCustomer(null);
 
@@ -981,15 +962,12 @@ export default function CariPage() {
     }
 
     const amount =
-      parsePaymentAmount(
-        refundAmount
-      );
+      parsePaymentAmount(refundAmount);
 
-    const availableCredit =
-      Math.max(
-        -selectedCustomer.balance,
-        0
-      );
+    const availableCredit = Math.max(
+      -selectedCustomer.balance,
+      0
+    );
 
     if (
       !Number.isFinite(amount) ||
@@ -1001,18 +979,14 @@ export default function CariPage() {
       return;
     }
 
-    if (
-      availableCredit <= 0
-    ) {
+    if (availableCredit <= 0) {
       alert(
         "Bu müşterinin iade edilecek alacağı bulunmuyor."
       );
       return;
     }
 
-    if (
-      amount > availableCredit
-    ) {
+    if (amount > availableCredit) {
       alert(
         `İade tutarı müşterinin alacağından fazla olamaz.\n\n` +
           `Müşteri alacağı: ${formatPrice(
@@ -1025,22 +999,12 @@ export default function CariPage() {
       return;
     }
 
-    if (
-      !hasRequiredRefundAccount
-    ) {
-      if (
-        refundPaymentMethod ===
-        "Nakit"
-      ) {
-        alert(
-          "İade için aktif bir kasa hesabı seçmelisiniz."
-        );
-      } else {
-        alert(
-          "İade için aktif bir banka hesabı seçmelisiniz."
-        );
-      }
-
+    if (!hasRequiredRefundAccount) {
+      alert(
+        refundPaymentMethod === "Nakit"
+          ? "İade için aktif bir kasa hesabı seçmelisiniz."
+          : "İade için aktif bir banka hesabı seçmelisiniz."
+      );
       return;
     }
 
@@ -1067,27 +1031,27 @@ export default function CariPage() {
               selectedAccount.balance || 0
             )
           )} ₺\n` +
-          `İade: ${formatPrice(
-            amount
-          )} ₺`
+          `İade: ${formatPrice(amount)} ₺`
       );
       return;
     }
 
+    const accountName =
+      "name" in selectedAccount
+        ? selectedAccount.name
+        : `${selectedAccount.bank_name} / ${selectedAccount.account_name}`;
+
     const confirmed =
-  window.confirm(
-    `Müşteriye ${formatPrice(
-      amount
-    )} ₺ iade yapılacak.\n\n` +
-      `Müşteri: ${selectedCustomer.company_name}\n` +
-      `Yöntem: ${refundPaymentMethod}\n` +
-      `Hesap: ${
-        "name" in selectedAccount
-          ? selectedAccount.name
-          : `${selectedAccount.bank_name} / ${selectedAccount.account_name}`
-      }\n\n` +
-      "Bu işlem seçilen kasa veya banka hesabından para çıkaracaktır.\n\nDevam etmek istiyor musunuz?"
-  );
+      window.confirm(
+        `Müşteriye ${formatPrice(
+          amount
+        )} ₺ iade yapılacak.\n\n` +
+          `Müşteri: ${selectedCustomer.company_name}\n` +
+          `Yöntem: ${refundPaymentMethod}\n` +
+          `Hesap: ${accountName}\n\n` +
+          `Bu işlem seçilen hesaptan para çıkaracaktır.\n\n` +
+          `Devam etmek istiyor musunuz?`
+      );
 
     if (!confirmed) {
       return;
@@ -1095,7 +1059,7 @@ export default function CariPage() {
 
     setSavingRefund(true);
 
-    const { data, error } =
+    const { error } =
       await supabase.rpc(
         "add_customer_refund",
         {
@@ -1105,8 +1069,7 @@ export default function CariPage() {
           p_payment_method:
             refundPaymentMethod,
           p_note:
-            refundNote.trim() ||
-            null,
+            refundNote.trim() || null,
           p_account_type:
             isBankRefund
               ? "bank"
@@ -1130,15 +1093,10 @@ export default function CariPage() {
       return;
     }
 
-    console.log(
-      "MÜŞTERİ İADE SONUCU:",
-      data
-    );
-
     setSavingRefund(false);
     setShowRefundModal(false);
 
-    await loadCari();
+    await loadCari(true);
 
     setSelectedCustomer(null);
 
@@ -1157,6 +1115,18 @@ export default function CariPage() {
               transaction.customer_id ===
               selectedCustomer.id
           )
+          .filter((transaction) => {
+            if (
+              transactionFilter === "all"
+            ) {
+              return true;
+            }
+
+            return (
+              transaction.transaction_type ===
+              transactionFilter
+            );
+          })
           .sort(
             (a, b) =>
               new Date(
@@ -1178,223 +1148,360 @@ export default function CariPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 p-10">
-        <p className="text-slate-500">
-          Cari hesaplar yükleniyor...
-        </p>
+      <div className="min-h-screen bg-slate-50">
+        <div className="mx-auto max-w-7xl p-6">
+          <div className="mb-8 animate-pulse">
+            <div className="h-8 w-52 rounded-lg bg-slate-200" />
+            <div className="mt-3 h-4 w-80 rounded bg-slate-200" />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((item) => (
+              <div
+                key={item}
+                className="h-32 animate-pulse rounded-2xl border border-slate-200 bg-white"
+              />
+            ))}
+          </div>
+
+          <div className="mt-6 h-96 animate-pulse rounded-2xl border border-slate-200 bg-white" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6 print:bg-white print:p-0">
-      <div className="mx-auto max-w-7xl">
-        {/* BAŞLIK */}
-        <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between print:hidden">
+    <div className="min-h-screen bg-slate-50 print:bg-white print:p-0">
+      <div className="mx-auto max-w-[1500px] p-4 sm:p-6 lg:p-8">
+        {/* HEADER */}
+        <div className="mb-8 flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between print:hidden">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">
-              Cari Hesaplar
-            </h1>
+            <div className="mb-2 flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-xl text-white shadow-lg">
+                ₺
+              </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Müşteri borçlarını, tahsilatlarını ve cari hareketlerini yönetin.
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+                  Finans
+                </p>
+
+                <h1 className="text-3xl font-black tracking-tight text-slate-900">
+                  Cari Hesaplar
+                </h1>
+              </div>
+            </div>
+
+            <p className="max-w-2xl text-sm text-slate-500">
+              Müşteri bakiyelerini, satışları,
+              tahsilatları ve cari hareketleri tek
+              ekrandan yönetin.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={loadCari}
-            disabled={loadingAccounts}
-            className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => loadCari(true)}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loadingAccounts
-              ? "Yükleniyor..."
-              : "↻ Yenile"}
+            <span
+              className={
+                refreshing
+                  ? "animate-spin"
+                  : ""
+              }
+            >
+              ↻
+            </span>
+
+            {refreshing
+              ? "Yenileniyor..."
+              : "Yenile"}
           </button>
         </div>
 
-        {/* ÖZET KARTLARI */}
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-5 print:hidden">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">
-              Müşteri Borcu
-            </p>
+        {/* ANA ÖZET */}
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 print:hidden">
+          <div className="group overflow-hidden rounded-2xl border border-red-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <div className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Müşteri Borcu
+                  </p>
 
-            <p className="mt-2 text-2xl font-bold text-red-600">
-              {formatPrice(
-                totalCustomerDebt
-              )}{" "}
-              ₺
-            </p>
+                  <p className="mt-2 text-2xl font-black tracking-tight text-red-600">
+                    {formatPrice(
+                      totalCustomerDebt
+                    )}{" "}
+                    ₺
+                  </p>
+                </div>
 
-            <p className="mt-1 text-xs text-slate-400">
-              {debtCustomerCount} borçlu müşteri
-            </p>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-50 text-lg">
+                  ↑
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-xs text-slate-400">
+                  Borçlu müşteri
+                </span>
+
+                <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-600">
+                  {debtCustomerCount}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">
-              Toplam Satış
-            </p>
+          <div className="group overflow-hidden rounded-2xl border border-green-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <div className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Toplam Tahsilat
+                  </p>
 
-            <p className="mt-2 text-2xl font-bold text-red-600">
-              {formatPrice(
-                totalSales
-              )}{" "}
-              ₺
-            </p>
+                  <p className="mt-2 text-2xl font-black tracking-tight text-green-600">
+                    {formatPrice(
+                      totalPayments
+                    )}{" "}
+                    ₺
+                  </p>
+                </div>
+
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50 text-lg">
+                  ✓
+                </div>
+              </div>
+
+              <div className="mt-4 border-t border-slate-100 pt-3">
+                <span className="text-xs text-slate-400">
+                  Gerçekleşen müşteri tahsilatları
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">
-              Toplam Tahsilat
-            </p>
+          <div className="group overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <div className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Müşteri Alacağı
+                  </p>
 
-            <p className="mt-2 text-2xl font-bold text-green-600">
-              {formatPrice(
-                totalPayments
-              )}{" "}
-              ₺
-            </p>
+                  <p className="mt-2 text-2xl font-black tracking-tight text-blue-600">
+                    {formatPrice(
+                      totalCustomerCredit
+                    )}{" "}
+                    ₺
+                  </p>
+                </div>
+
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-lg">
+                  ↓
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                <span className="text-xs text-slate-400">
+                  Alacaklı müşteri
+                </span>
+
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-600">
+                  {creditCustomerCount}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">
-              Toplam İade
-            </p>
+          <div className="group overflow-hidden rounded-2xl border border-slate-200 bg-slate-900 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <div className="p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                    Kasa + Banka
+                  </p>
 
-            <p className="mt-2 text-2xl font-bold text-blue-600">
-              {formatPrice(
-                totalRefunds
-              )}{" "}
-              ₺
-            </p>
-          </div>
+                  <p className="mt-2 text-2xl font-black tracking-tight text-white">
+                    {formatPrice(
+                      totalLiquidAssets
+                    )}{" "}
+                    ₺
+                  </p>
+                </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-sm font-medium text-slate-500">
-              Müşteri Alacağı
-            </p>
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-lg text-white">
+                  $
+                </div>
+              </div>
 
-            <p className="mt-2 text-2xl font-bold text-blue-600">
-              {formatPrice(
-                totalCustomerCredit
-              )}{" "}
-              ₺
-            </p>
+              <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-3 text-xs">
+                <span className="text-slate-400">
+                  Kasa
+                </span>
 
-            <p className="mt-1 text-xs text-slate-400">
-              {creditCustomerCount} alacaklı müşteri
-            </p>
+                <span className="font-bold text-white">
+                  {formatPrice(totalCash)} ₺
+                </span>
+
+                <span className="text-slate-600">
+                  /
+                </span>
+
+                <span className="text-slate-400">
+                  Banka
+                </span>
+
+                <span className="font-bold text-white">
+                  {formatPrice(totalBank)} ₺
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* HIZLI DURUM */}
+        {/* İKİNCİ ÖZET */}
         <div className="mb-6 grid gap-3 sm:grid-cols-3 print:hidden">
           <button
             type="button"
             onClick={() =>
               setBalanceFilter(
-                balanceFilter ===
-                  "debt"
+                balanceFilter === "debt"
                   ? "all"
                   : "debt"
               )
             }
-            className={`rounded-xl border p-4 text-left transition ${
+            className={`rounded-2xl border p-4 text-left transition ${
               balanceFilter === "debt"
-                ? "border-red-300 bg-red-50"
-                : "border-slate-200 bg-white hover:bg-slate-50"
+                ? "border-red-300 bg-red-50 shadow-sm"
+                : "border-slate-200 bg-white hover:border-red-200 hover:bg-red-50/30"
             }`}
           >
-            <p className="text-xs font-semibold text-slate-400">
-              BORÇLU HESAPLAR
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Borçlu Hesaplar
+                </p>
 
-            <p className="mt-1 text-xl font-bold text-red-600">
-              {debtCustomerCount}
-            </p>
+                <p className="mt-1 text-xl font-black text-red-600">
+                  {debtCustomerCount}
+                </p>
+              </div>
+
+              <span className="text-xl">
+                🔴
+              </span>
+            </div>
           </button>
 
           <button
             type="button"
             onClick={() =>
               setBalanceFilter(
-                balanceFilter ===
-                  "credit"
+                balanceFilter === "credit"
                   ? "all"
                   : "credit"
               )
             }
-            className={`rounded-xl border p-4 text-left transition ${
-              balanceFilter ===
-              "credit"
-                ? "border-blue-300 bg-blue-50"
-                : "border-slate-200 bg-white hover:bg-slate-50"
+            className={`rounded-2xl border p-4 text-left transition ${
+              balanceFilter === "credit"
+                ? "border-blue-300 bg-blue-50 shadow-sm"
+                : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/30"
             }`}
           >
-            <p className="text-xs font-semibold text-slate-400">
-              MÜŞTERİ ALACAKLI
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Müşteri Alacaklı
+                </p>
 
-            <p className="mt-1 text-xl font-bold text-blue-600">
-              {creditCustomerCount}
-            </p>
+                <p className="mt-1 text-xl font-black text-blue-600">
+                  {creditCustomerCount}
+                </p>
+              </div>
+
+              <span className="text-xl">
+                🔵
+              </span>
+            </div>
           </button>
 
           <button
             type="button"
             onClick={() =>
               setBalanceFilter(
-                balanceFilter ===
-                  "closed"
+                balanceFilter === "closed"
                   ? "all"
                   : "closed"
               )
             }
-            className={`rounded-xl border p-4 text-left transition ${
-              balanceFilter ===
-              "closed"
-                ? "border-green-300 bg-green-50"
-                : "border-slate-200 bg-white hover:bg-slate-50"
+            className={`rounded-2xl border p-4 text-left transition ${
+              balanceFilter === "closed"
+                ? "border-green-300 bg-green-50 shadow-sm"
+                : "border-slate-200 bg-white hover:border-green-200 hover:bg-green-50/30"
             }`}
           >
-            <p className="text-xs font-semibold text-slate-400">
-              KAPALI HESAPLAR
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">
+                  Kapalı Hesaplar
+                </p>
 
-            <p className="mt-1 text-xl font-bold text-green-600">
-              {closedCustomerCount}
-            </p>
+                <p className="mt-1 text-xl font-black text-green-600">
+                  {closedCustomerCount}
+                </p>
+              </div>
+
+              <span className="text-xl">
+                🟢
+              </span>
+            </div>
           </button>
         </div>
 
-        {/* MÜŞTERİLER */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-200 p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        {/* MÜŞTERİ TABLOSU */}
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm print:hidden">
+          <div className="border-b border-slate-200 p-5 sm:p-6">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">
-                  Müşteri Cari Hesapları
-                </h2>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-xl font-black tracking-tight text-slate-900">
+                    Müşteri Cari Hesapları
+                  </h2>
 
-                <p className="mt-1 text-xs text-slate-400">
-                  {filteredCustomers.length} müşteri gösteriliyor
+                  <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500">
+                    {filteredCustomers.length}
+                  </span>
+                </div>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  Müşterilerin güncel cari durumunu
+                  görüntüleyin.
                 </p>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) =>
-                    setSearch(
-                      e.target.value
-                    )
-                  }
-                  placeholder="Müşteri, telefon veya şehir ara..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-slate-900 focus:bg-white sm:w-80"
-                />
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                    ⌕
+                  </span>
+
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) =>
+                      setSearch(
+                        e.target.value
+                      )
+                    }
+                    placeholder="Müşteri, telefon veya şehir..."
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-slate-900 focus:bg-white sm:w-80"
+                  />
+                </div>
 
                 <select
                   value={balanceFilter}
@@ -1404,7 +1511,7 @@ export default function CariPage() {
                         .value as BalanceFilter
                     )
                   }
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-slate-900"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:border-slate-900"
                 >
                   <option value="all">
                     Tüm Hesaplar
@@ -1426,49 +1533,65 @@ export default function CariPage() {
             </div>
           </div>
 
-          {filteredCustomers.length ===
-          0 ? (
-            <div className="p-12 text-center">
-              <div className="text-4xl">
-                🔎
+          {filteredCustomers.length === 0 ? (
+            <div className="p-16 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-2xl">
+                ⌕
               </div>
 
-              <p className="mt-3 font-semibold text-slate-700">
+              <p className="mt-4 font-bold text-slate-800">
                 Müşteri bulunamadı
               </p>
 
               <p className="mt-1 text-sm text-slate-400">
-                Arama veya filtre kriterlerini değiştirmeyi deneyin.
+                Arama veya filtre kriterlerini
+                değiştirmeyi deneyin.
               </p>
+
+              {(search ||
+                balanceFilter !== "all") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch("");
+                    setBalanceFilter(
+                      "all"
+                    );
+                  }}
+                  className="mt-5 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white"
+                >
+                  Filtreleri Temizle
+                </button>
+              )}
             </div>
           ) : (
             <>
-              {/* MASAÜSTÜ */}
+              {/* DESKTOP */}
               <div className="hidden overflow-x-auto md:block">
                 <table className="w-full">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50/80">
+                      <th className="px-6 py-4 text-left text-[11px] font-black uppercase tracking-wider text-slate-400">
                         Müşteri
                       </th>
 
-                      <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-5 py-4 text-right text-[11px] font-black uppercase tracking-wider text-slate-400">
                         Satış
                       </th>
 
-                      <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-5 py-4 text-right text-[11px] font-black uppercase tracking-wider text-slate-400">
                         Tahsilat
                       </th>
 
-                      <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-5 py-4 text-right text-[11px] font-black uppercase tracking-wider text-slate-400">
                         İade
                       </th>
 
-                      <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-5 py-4 text-right text-[11px] font-black uppercase tracking-wider text-slate-400">
                         Bakiye
                       </th>
 
-                      <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <th className="px-6 py-4 text-right text-[11px] font-black uppercase tracking-wider text-slate-400">
                         İşlem
                       </th>
                     </tr>
@@ -1476,117 +1599,166 @@ export default function CariPage() {
 
                   <tbody className="divide-y divide-slate-100">
                     {filteredCustomers.map(
-                      (customer) => (
-                        <tr
-                          key={
+                      (customer) => {
+                        const lastTransaction =
+                          getLastTransaction(
                             customer.id
-                          }
-                          className="transition hover:bg-slate-50"
-                        >
-                          <td className="px-6 py-5">
-                            <div className="font-semibold text-slate-900">
-                              {
-                                customer.company_name
-                              }
-                            </div>
+                          );
 
-                            {customer.contact_name && (
-                              <div className="mt-1 text-xs text-slate-400">
-                                {
-                                  customer.contact_name
-                                }
-                              </div>
-                            )}
+                        const balanceColor =
+                          getBalanceColor(
+                            customer.balance
+                          );
 
-                            {customer.phone && (
-                              <div className="mt-1 text-xs text-slate-400">
-                                {
-                                  customer.phone
-                                }
-                              </div>
-                            )}
-                          </td>
-
-                          <td className="px-6 py-5 text-right font-semibold text-red-600">
-                            {formatPrice(
-                              customer.sales
-                            )}{" "}
-                            ₺
-                          </td>
-
-                          <td className="px-6 py-5 text-right font-semibold text-green-600">
-                            {formatPrice(
-                              customer.payments
-                            )}{" "}
-                            ₺
-                          </td>
-
-                          <td className="px-6 py-5 text-right font-semibold text-blue-600">
-                            {formatPrice(
-                              customer.refunds
-                            )}{" "}
-                            ₺
-                          </td>
-
-                          <td className="px-6 py-5 text-right">
-                            {customer.balance >
-                            0 ? (
-                              <div>
-                                <div className="font-bold text-red-600">
-                                  {formatPrice(
-                                    customer.balance
-                                  )}{" "}
-                                  ₺
+                        return (
+                          <tr
+                            key={customer.id}
+                            className="group transition hover:bg-slate-50"
+                          >
+                            <td className="px-6 py-5">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-sm font-black text-slate-600">
+                                  {customer.company_name
+                                    .slice(
+                                      0,
+                                      1
+                                    )
+                                    .toLocaleUpperCase(
+                                      "tr-TR"
+                                    )}
                                 </div>
 
-                                <div className="mt-1 text-xs font-medium text-red-400">
-                                  Borç
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900">
+                                    {
+                                      customer.company_name
+                                    }
+                                  </div>
+
+                                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                                    {customer.contact_name && (
+                                      <span>
+                                        {
+                                          customer.contact_name
+                                        }
+                                      </span>
+                                    )}
+
+                                    {customer.city && (
+                                      <>
+                                        <span>
+                                          •
+                                        </span>
+
+                                        <span>
+                                          {
+                                            customer.city
+                                          }
+                                        </span>
+                                      </>
+                                    )}
+
+                                    {lastTransaction && (
+                                      <>
+                                        <span>
+                                          •
+                                        </span>
+
+                                        <span>
+                                          Son işlem{" "}
+                                          {formatShortDate(
+                                            lastTransaction.created_at
+                                          )}
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            ) : customer.balance <
-                              0 ? (
-                              <div>
-                                <div className="font-bold text-blue-600">
+                            </td>
+
+                            <td className="px-5 py-5 text-right">
+                              <span className="font-bold text-red-600">
+                                {formatPrice(
+                                  customer.sales
+                                )}{" "}
+                                ₺
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-5 text-right">
+                              <span className="font-bold text-green-600">
+                                {formatPrice(
+                                  customer.payments
+                                )}{" "}
+                                ₺
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-5 text-right">
+                              <span className="font-bold text-blue-600">
+                                {formatPrice(
+                                  customer.refunds
+                                )}{" "}
+                                ₺
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-5 text-right">
+                              <div className="flex flex-col items-end">
+                                <span
+                                  className={`font-black ${
+                                    balanceColor ===
+                                    "red"
+                                      ? "text-red-600"
+                                      : balanceColor ===
+                                        "blue"
+                                      ? "text-blue-600"
+                                      : "text-green-600"
+                                  }`}
+                                >
                                   {formatPrice(
                                     Math.abs(
                                       customer.balance
                                     )
                                   )}{" "}
                                   ₺
-                                </div>
+                                </span>
 
-                                <div className="mt-1 text-xs font-medium text-blue-500">
-                                  Müşteri Alacaklı
-                                </div>
+                                <span
+                                  className={`mt-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    balanceColor ===
+                                    "red"
+                                      ? "bg-red-50 text-red-600"
+                                      : balanceColor ===
+                                        "blue"
+                                      ? "bg-blue-50 text-blue-600"
+                                      : "bg-green-50 text-green-600"
+                                  }`}
+                                >
+                                  {getBalanceLabel(
+                                    customer.balance
+                                  )}
+                                </span>
                               </div>
-                            ) : (
-                              <div>
-                                <div className="font-bold text-green-600">
-                                  0,00 ₺
-                                </div>
+                            </td>
 
-                                <div className="mt-1 text-xs font-medium text-green-500">
-                                  Hesap Kapalı
-                                </div>
-                              </div>
-                            )}
-                          </td>
-
-                          <td className="px-6 py-5 text-right">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                openCustomer(
-                                  customer
-                                )
-                              }
-                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-                            >
-                              Detay
-                            </button>
-                          </td>
-                        </tr>
-                      )
+                            <td className="px-6 py-5 text-right">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openCustomer(
+                                    customer
+                                  )
+                                }
+                                className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white opacity-90 transition hover:bg-slate-700 hover:opacity-100"
+                              >
+                                Detay →
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      }
                     )}
                   </tbody>
                 </table>
@@ -1597,86 +1769,80 @@ export default function CariPage() {
                 {filteredCustomers.map(
                   (customer) => (
                     <button
-                      key={
-                        customer.id
-                      }
+                      key={customer.id}
                       type="button"
                       onClick={() =>
                         openCustomer(
                           customer
                         )
                       }
-                      className="w-full p-5 text-left transition hover:bg-slate-50"
+                      className="w-full p-5 text-left transition active:bg-slate-100"
                     >
                       <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0">
-                          <p className="truncate font-bold text-slate-900">
-                            {
-                              customer.company_name
-                            }
-                          </p>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-sm font-black text-slate-600">
+                            {customer.company_name
+                              .slice(
+                                0,
+                                1
+                              )
+                              .toLocaleUpperCase(
+                                "tr-TR"
+                              )}
+                          </div>
 
-                          {customer.contact_name && (
-                            <p className="mt-1 text-xs text-slate-400">
+                          <div className="min-w-0">
+                            <p className="truncate font-bold text-slate-900">
                               {
-                                customer.contact_name
+                                customer.company_name
                               }
                             </p>
-                          )}
+
+                            {customer.contact_name && (
+                              <p className="mt-1 truncate text-xs text-slate-400">
+                                {
+                                  customer.contact_name
+                                }
+                              </p>
+                            )}
+                          </div>
                         </div>
 
                         <div className="shrink-0 text-right">
-                          {customer.balance >
-                          0 ? (
-                            <>
-                              <p className="font-bold text-red-600">
-                                {formatPrice(
-                                  customer.balance
-                                )}{" "}
-                                ₺
-                              </p>
+                          <p
+                            className={`font-black ${
+                              customer.balance >
+                              0
+                                ? "text-red-600"
+                                : customer.balance <
+                                  0
+                                ? "text-blue-600"
+                                : "text-green-600"
+                            }`}
+                          >
+                            {formatPrice(
+                              Math.abs(
+                                customer.balance
+                              )
+                            )}{" "}
+                            ₺
+                          </p>
 
-                              <p className="text-xs text-red-400">
-                                Borç
-                              </p>
-                            </>
-                          ) : customer.balance <
-                            0 ? (
-                            <>
-                              <p className="font-bold text-blue-600">
-                                {formatPrice(
-                                  Math.abs(
-                                    customer.balance
-                                  )
-                                )}{" "}
-                                ₺
-                              </p>
-
-                              <p className="text-xs text-blue-500">
-                                Alacaklı
-                              </p>
-                            </>
-                          ) : (
-                            <>
-                              <p className="font-bold text-green-600">
-                                0,00 ₺
-                              </p>
-
-                              <p className="text-xs text-green-500">
-                                Kapalı
-                              </p>
-                            </>
-                          )}
+                          <p className="mt-1 text-[10px] font-bold text-slate-400">
+                            {getBalanceLabel(
+                              customer.balance
+                            )}
+                          </p>
                         </div>
                       </div>
 
-                      <div className="mt-4 grid grid-cols-3 gap-2">
-                        <div className="rounded-lg bg-red-50 p-2">
-                          <p className="text-[10px] font-semibold text-red-400">
-                            SATIŞ
+                      <div className="mt-5 grid grid-cols-3 gap-2">
+                        <div className="rounded-xl bg-red-50 p-3">
+                          <p className="text-[9px] font-black uppercase text-red-400">
+                            Satış
                           </p>
 
-                          <p className="mt-1 text-xs font-bold text-red-600">
+                          <p className="mt-1 text-xs font-black text-red-600">
                             {formatPrice(
                               customer.sales
                             )}{" "}
@@ -1684,12 +1850,12 @@ export default function CariPage() {
                           </p>
                         </div>
 
-                        <div className="rounded-lg bg-green-50 p-2">
-                          <p className="text-[10px] font-semibold text-green-500">
-                            TAHSİLAT
+                        <div className="rounded-xl bg-green-50 p-3">
+                          <p className="text-[9px] font-black uppercase text-green-500">
+                            Tahsilat
                           </p>
 
-                          <p className="mt-1 text-xs font-bold text-green-600">
+                          <p className="mt-1 text-xs font-black text-green-600">
                             {formatPrice(
                               customer.payments
                             )}{" "}
@@ -1697,12 +1863,12 @@ export default function CariPage() {
                           </p>
                         </div>
 
-                        <div className="rounded-lg bg-blue-50 p-2">
-                          <p className="text-[10px] font-semibold text-blue-400">
-                            İADE
+                        <div className="rounded-xl bg-blue-50 p-3">
+                          <p className="text-[9px] font-black uppercase text-blue-400">
+                            İade
                           </p>
 
-                          <p className="mt-1 text-xs font-bold text-blue-600">
+                          <p className="mt-1 text-xs font-black text-blue-600">
                             {formatPrice(
                               customer.refunds
                             )}{" "}
@@ -1719,72 +1885,119 @@ export default function CariPage() {
         </div>
       </div>
 
-      {/* CARİ DETAY MODAL */}
+      {/* CARİ DETAY */}
       {selectedCustomer && (
-        <div className="cari-print-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-4">
-          <div className="cari-print-card max-h-[94vh] w-full max-w-5xl overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 p-4 sm:p-6 print:hidden">
-              <div className="min-w-0">
-                <h2 className="truncate text-xl font-bold text-slate-900 sm:text-2xl">
-                  {
-                    selectedCustomer.company_name
-                  }
-                </h2>
+        <div
+          className="cari-print-modal fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-2 backdrop-blur-sm sm:p-4"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              closeCustomer();
+            }
+          }}
+        >
+          <div className="cari-print-card flex max-h-[96vh] w-full max-w-6xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl">
+            {/* MODAL HEADER */}
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-4 sm:px-7 sm:py-5 print:hidden">
+              <div className="flex min-w-0 items-center gap-4">
+                <div className="hidden h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-lg font-black text-white sm:flex">
+                  {selectedCustomer.company_name
+                    .slice(
+                      0,
+                      1
+                    )
+                    .toLocaleUpperCase(
+                      "tr-TR"
+                    )}
+                </div>
 
-                {selectedCustomer.contact_name && (
-                  <p className="mt-1 text-sm text-slate-500">
-                    {
-                      selectedCustomer.contact_name
-                    }
-                  </p>
-                )}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="truncate text-xl font-black tracking-tight text-slate-900 sm:text-2xl">
+                      {
+                        selectedCustomer.company_name
+                      }
+                    </h2>
+
+                    <span
+                      className={`hidden rounded-full px-2.5 py-1 text-[10px] font-bold sm:inline-flex ${
+                        selectedCustomer.balance >
+                        0
+                          ? "bg-red-50 text-red-600"
+                          : selectedCustomer.balance <
+                            0
+                          ? "bg-blue-50 text-blue-600"
+                          : "bg-green-50 text-green-600"
+                      }`}
+                    >
+                      {getBalanceLabel(
+                        selectedCustomer.balance
+                      )}
+                    </span>
+                  </div>
+
+                  {selectedCustomer.contact_name && (
+                    <p className="mt-1 text-sm text-slate-500">
+                      {
+                        selectedCustomer.contact_name
+                      }
+                    </p>
+                  )}
+                </div>
               </div>
 
               <button
                 type="button"
-                onClick={() =>
-                  setSelectedCustomer(
-                    null
-                  )
-                }
-                className="rounded-lg px-3 py-2 text-2xl text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                onClick={closeCustomer}
+                className="ml-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-2xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
               >
                 ×
               </button>
             </div>
 
-           <div className="cari-print-scroll max-h-[calc(94vh-90px)] overflow-y-auto p-4 sm:p-6">
-  <div className="mb-6 hidden print:block">
-    <img
-      src="/esoralogo.png"
-      alt="ESORA"
-      className="h-16 w-auto object-contain"
-    />
+            {/* PRINT HEADER */}
+            <div className="hidden print:block">
+              <img
+                src="/esoralogo.png"
+                alt="ESORA"
+                className="h-16 w-auto object-contain"
+              />
 
-    <h2 className="mt-2 text-xl font-bold">
-      Cari Hesap Ekstresi
-    </h2>
+              <div className="mt-4 border-b border-slate-300 pb-4">
+                <h1 className="text-2xl font-black">
+                  Cari Hesap Ekstresi
+                </h1>
 
-    <p className="mt-2">
-      Müşteri:{" "}
-      {selectedCustomer.company_name}
-    </p>
-                <p>
+                <p className="mt-2">
+                  Müşteri:{" "}
+                  <strong>
+                    {
+                      selectedCustomer.company_name
+                    }
+                  </strong>
+                </p>
+
+                <p className="mt-1">
                   Tarih:{" "}
                   {new Date().toLocaleDateString(
                     "tr-TR"
                   )}
                 </p>
               </div>
+            </div>
 
-              {/* CARİ ÖZET */}
+            {/* MODAL BODY */}
+            <div className="cari-print-scroll min-h-0 flex-1 overflow-y-auto p-4 sm:p-7">
+              {/* ÖZET */}
               <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl bg-red-50 p-4">
-                  <p className="text-xs font-semibold text-red-400">
-                    TOPLAM SATIŞ
+                <div className="rounded-2xl border border-red-100 bg-red-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-red-400">
+                    Toplam Satış
                   </p>
 
-                  <p className="mt-1 text-lg font-bold text-red-600">
+                  <p className="mt-2 text-xl font-black text-red-600">
                     {formatPrice(
                       selectedCustomer.sales
                     )}{" "}
@@ -1792,12 +2005,12 @@ export default function CariPage() {
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-green-50 p-4">
-                  <p className="text-xs font-semibold text-green-500">
-                    TOPLAM TAHSİLAT
+                <div className="rounded-2xl border border-green-100 bg-green-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-green-500">
+                    Toplam Tahsilat
                   </p>
 
-                  <p className="mt-1 text-lg font-bold text-green-600">
+                  <p className="mt-2 text-xl font-black text-green-600">
                     {formatPrice(
                       selectedCustomer.payments
                     )}{" "}
@@ -1805,12 +2018,12 @@ export default function CariPage() {
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-blue-50 p-4">
-                  <p className="text-xs font-semibold text-blue-400">
-                    TOPLAM İADE
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-blue-400">
+                    Satış İadesi
                   </p>
 
-                  <p className="mt-1 text-lg font-bold text-blue-600">
+                  <p className="mt-2 text-xl font-black text-blue-600">
                     {formatPrice(
                       selectedCustomer.refunds
                     )}{" "}
@@ -1819,21 +2032,21 @@ export default function CariPage() {
                 </div>
 
                 <div
-                  className={`rounded-xl p-4 ${
+                  className={`rounded-2xl p-4 text-white ${
                     selectedCustomer.balance >
                     0
-                      ? "bg-red-600 text-white"
+                      ? "bg-red-600"
                       : selectedCustomer.balance <
                         0
-                      ? "bg-blue-600 text-white"
-                      : "bg-green-600 text-white"
+                      ? "bg-blue-600"
+                      : "bg-green-600"
                   }`}
                 >
-                  <p className="text-xs font-semibold opacity-80">
-                    GÜNCEL BAKİYE
+                  <p className="text-[10px] font-black uppercase tracking-wider opacity-80">
+                    Güncel Bakiye
                   </p>
 
-                  <p className="mt-1 text-lg font-bold">
+                  <p className="mt-2 text-xl font-black">
                     {formatPrice(
                       Math.abs(
                         selectedCustomer.balance
@@ -1842,33 +2055,35 @@ export default function CariPage() {
                     ₺
                   </p>
 
-                  <p className="mt-1 text-xs font-medium opacity-80">
-                    {selectedCustomer.balance >
-                    0
-                      ? "Müşteri borçlu"
-                      : selectedCustomer.balance <
-                        0
-                      ? "Müşteri alacaklı"
-                      : "Hesap kapalı"}
+                  <p className="mt-1 text-xs font-semibold opacity-80">
+                    {getBalanceLabel(
+                      selectedCustomer.balance
+                    )}
                   </p>
                 </div>
               </div>
 
-              {/* MÜŞTERİ BİLGİLERİ */}
-              <div className="mb-6 rounded-xl border border-slate-200 p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="font-bold text-slate-900">
-                    Müşteri Bilgileri
-                  </h3>
+              {/* BİLGİLER */}
+              <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Müşteri Bilgileri
+                    </p>
+
+                    <h3 className="mt-1 text-lg font-black text-slate-900">
+                      Hesap Profili
+                    </h3>
+                  </div>
 
                   {selectedCustomer.credit_limit !==
                     null && (
-                    <div className="text-right">
-                      <p className="text-xs text-slate-400">
+                    <div className="rounded-xl bg-slate-50 px-4 py-3 sm:text-right">
+                      <p className="text-[10px] font-bold uppercase text-slate-400">
                         Kredi Limiti
                       </p>
 
-                      <p className="text-sm font-bold text-slate-700">
+                      <p className="mt-1 font-black text-slate-900">
                         {formatPrice(
                           Number(
                             selectedCustomer.credit_limit
@@ -1880,79 +2095,119 @@ export default function CariPage() {
                   )}
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {selectedCustomer.phone && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-400">
-                        Telefon
-                      </p>
+                <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Telefon
+                    </p>
 
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {
-                          selectedCustomer.phone
-                        }
-                      </p>
-                    </div>
-                  )}
+                    <p className="mt-1 text-sm font-bold text-slate-900">
+                      {selectedCustomer.phone ||
+                        "-"}
+                    </p>
+                  </div>
 
-                  {selectedCustomer.city && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-400">
-                        Şehir
-                      </p>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Şehir
+                    </p>
 
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {
-                          selectedCustomer.city
-                        }
-                      </p>
-                    </div>
-                  )}
+                    <p className="mt-1 text-sm font-bold text-slate-900">
+                      {selectedCustomer.city ||
+                        "-"}
+                    </p>
+                  </div>
 
-                  {selectedCustomer.payment_term !==
-                    null && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-400">
-                        Vade
-                      </p>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Vade
+                    </p>
 
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {
-                          selectedCustomer.payment_term
-                        }{" "}
-                        gün
-                      </p>
-                    </div>
-                  )}
+                    <p className="mt-1 text-sm font-bold text-slate-900">
+                      {selectedCustomer.payment_term !==
+                      null
+                        ? `${selectedCustomer.payment_term} gün`
+                        : "-"}
+                    </p>
+                  </div>
 
-                  {selectedCustomer.payment_method && (
-                    <div>
-                      <p className="text-xs font-semibold uppercase text-slate-400">
-                        Ödeme Tercihi
-                      </p>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                      Ödeme Tercihi
+                    </p>
 
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
-                        {
-                          selectedCustomer.payment_method
-                        }
-                      </p>
-                    </div>
-                  )}
+                    <p className="mt-1 text-sm font-bold text-slate-900">
+                      {selectedCustomer.payment_method ||
+                        "-"}
+                    </p>
+                  </div>
                 </div>
+
+                {selectedCustomer.credit_limit !==
+                  null &&
+                  selectedCustomer.credit_limit >
+                    0 && (
+                    <div className="mt-5">
+                      <div className="mb-2 flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-500">
+                          Kredi kullanımı
+                        </span>
+
+                        <span className="font-bold text-slate-700">
+                          {formatPrice(
+                            Math.max(
+                              selectedCustomer.balance,
+                              0
+                            )
+                          )}{" "}
+                          /{" "}
+                          {formatPrice(
+                            Number(
+                              selectedCustomer.credit_limit
+                            )
+                          )}{" "}
+                          ₺
+                        </span>
+                      </div>
+
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            selectedCustomer.balance >=
+                            selectedCustomer.credit_limit
+                              ? "bg-red-500"
+                              : "bg-slate-900"
+                          }`}
+                          style={{
+                            width: `${Math.min(
+                              (Math.max(
+                                selectedCustomer.balance,
+                                0
+                              ) /
+                                Number(
+                                  selectedCustomer.credit_limit
+                                )) *
+                                100,
+                              100
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
               </div>
 
               {/* BUTONLAR */}
               <div className="mb-6 flex flex-wrap gap-3 print:hidden">
                 <button
                   type="button"
-                  onClick={
-                    openPaymentModal
-                  }
+                  onClick={openPaymentModal}
                   disabled={
                     selectedCustomer.balance <=
-                    0
+                      0 ||
+                    savingPayment
                   }
-                  className="rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-xl bg-green-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   + Tahsilat Ekle
                 </button>
@@ -1967,7 +2222,7 @@ export default function CariPage() {
                     disabled={
                       savingRefund
                     }
-                    className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-xl bg-orange-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     ↩ Müşteriye İade Et
                   </button>
@@ -1978,74 +2233,133 @@ export default function CariPage() {
                   onClick={
                     printCustomerStatement
                   }
-                  className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
                 >
                   🖨 Cari Ekstre
                 </button>
               </div>
 
-              {/* MÜŞTERİ ALACAĞI UYARISI */}
+              {/* ALACAK UYARISI */}
               {selectedCustomer.balance <
                 0 && (
-                <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4 print:hidden">
-                  <p className="font-bold text-blue-700">
-                    Müşterinin{" "}
-                    {formatPrice(
-                      Math.abs(
-                        selectedCustomer.balance
-                      )
-                    )}{" "}
-                    ₺ alacağı bulunuyor.
-                  </p>
+                <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-5 sm:flex-row sm:items-center sm:justify-between print:hidden">
+                  <div>
+                    <p className="font-black text-blue-800">
+                      Müşterinin{" "}
+                      {formatPrice(
+                        Math.abs(
+                          selectedCustomer.balance
+                        )
+                      )}{" "}
+                      ₺ alacağı bulunuyor.
+                    </p>
 
-                  <p className="mt-1 text-sm text-blue-600">
-                    İade işlemi yapıldığında seçilen kasa veya banka hesabından para çıkar ve müşteri alacağı kapanır.
-                  </p>
+                    <p className="mt-1 text-sm text-blue-600">
+                      Bu tutarı müşteriye iade
+                      edebilir veya cari hesapta
+                      bırakabilirsiniz.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={
+                      openRefundModal
+                    }
+                    className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700"
+                  >
+                    İade İşlemi
+                  </button>
                 </div>
               )}
 
               {/* HAREKETLER */}
-              <div className="overflow-hidden rounded-xl border border-slate-200">
-                <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
-                  <h3 className="font-bold text-slate-900">
-                    Cari Hareketleri
-                  </h3>
+              <div className="overflow-hidden rounded-2xl border border-slate-200">
+                <div className="border-b border-slate-200 bg-slate-50/70 p-5">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className="font-black text-slate-900">
+                        Cari Hareketleri
+                      </h3>
 
-                  <p className="mt-1 text-xs text-slate-400">
-                    {
-                      selectedCustomerTransactions.length
-                    }{" "}
-                    hareket
-                  </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {selectedCustomerTransactions.length}{" "}
+                        hareket
+                      </p>
+                    </div>
+
+                    <select
+                      value={
+                        transactionFilter
+                      }
+                      onChange={(e) =>
+                        setTransactionFilter(
+                          e.target.value
+                        )
+                      }
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none focus:border-slate-900 print:hidden"
+                    >
+                      <option value="all">
+                        Tüm Hareketler
+                      </option>
+
+                      <option value="sale">
+                        Satışlar
+                      </option>
+
+                      <option value="payment">
+                        Tahsilatlar
+                      </option>
+
+                      <option value="refund">
+                        Satış İadeleri
+                      </option>
+
+                      <option value="customer_refund">
+                        Müşteri İadeleri
+                      </option>
+                    </select>
+                  </div>
                 </div>
 
                 {selectedCustomerTransactions.length ===
                 0 ? (
-                  <div className="p-8 text-center text-sm text-slate-500">
-                    Bu müşteriye ait cari hareket bulunmuyor.
+                  <div className="p-10 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100">
+                      📄
+                    </div>
+
+                    <p className="mt-3 font-bold text-slate-700">
+                      Hareket bulunmuyor
+                    </p>
+
+                    <p className="mt-1 text-sm text-slate-400">
+                      Bu filtreye uygun cari hareket
+                      bulunamadı.
+                    </p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-slate-200 bg-white">
-                          <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500">
+                          <th className="whitespace-nowrap px-5 py-3 text-left text-[10px] font-black uppercase tracking-wider text-slate-400">
                             Tarih
                           </th>
 
-                          <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500">
+                          <th className="px-5 py-3 text-left text-[10px] font-black uppercase tracking-wider text-slate-400">
                             İşlem
                           </th>
 
-                          <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500">
+                          <th className="min-w-[240px] px-5 py-3 text-left text-[10px] font-black uppercase tracking-wider text-slate-400">
                             Açıklama
                           </th>
 
-                          <th className="px-5 py-3 text-left text-xs font-semibold text-slate-500">
+                          <th className="px-5 py-3 text-left text-[10px] font-black uppercase tracking-wider text-slate-400">
                             Ödeme
                           </th>
 
-                          <th className="px-5 py-3 text-right text-xs font-semibold text-slate-500">
+                          <th className="whitespace-nowrap px-5 py-3 text-right text-[10px] font-black uppercase tracking-wider text-slate-400">
                             Tutar
                           </th>
                         </tr>
@@ -2053,9 +2367,7 @@ export default function CariPage() {
 
                       <tbody className="divide-y divide-slate-100">
                         {selectedCustomerTransactions.map(
-                          (
-                            transaction
-                          ) => {
+                          (transaction) => {
                             const amount =
                               getTransactionAmount(
                                 transaction
@@ -2066,7 +2378,7 @@ export default function CariPage() {
                                 key={
                                   transaction.id
                                 }
-                                className="hover:bg-slate-50"
+                                className="transition hover:bg-slate-50"
                               >
                                 <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-500">
                                   {formatDate(
@@ -2076,7 +2388,7 @@ export default function CariPage() {
 
                                 <td className="px-5 py-4">
                                   <span
-                                    className={`rounded-full px-3 py-1 text-xs font-semibold ${getTransactionClass(
+                                    className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-black ring-1 ring-inset ${getTransactionClass(
                                       transaction.transaction_type
                                     )}`}
                                   >
@@ -2086,23 +2398,18 @@ export default function CariPage() {
                                   </span>
                                 </td>
 
-                                <td className="min-w-[220px] px-5 py-4 text-sm text-slate-700">
-                                  {
-                                    transaction.note
-                                  ||
-                                    "-"
-                                  }
+                                <td className="px-5 py-4 text-sm text-slate-700">
+                                  {transaction.note ||
+                                    "-"}
                                 </td>
 
-                                <td className="px-5 py-4 text-sm text-slate-600">
-                                  {
-                                    transaction.payment_method ||
-                                    "-"
-                                  }
+                                <td className="px-5 py-4 text-sm text-slate-500">
+                                  {transaction.payment_method ||
+                                    "-"}
                                 </td>
 
                                 <td
-                                  className={`whitespace-nowrap px-5 py-4 text-right font-bold ${amount.className}`}
+                                  className={`whitespace-nowrap px-5 py-4 text-right font-black ${amount.className}`}
                                 >
                                   {
                                     amount.text
@@ -2117,20 +2424,54 @@ export default function CariPage() {
                   </div>
                 )}
               </div>
+
+              {/* PRINT FOOTER */}
+              <div className="mt-8 hidden border-t border-slate-300 pt-4 print:block">
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>
+                    ESORA Cari Hesap Ekstresi
+                  </span>
+
+                  <span>
+                    Oluşturulma:{" "}
+                    {new Date().toLocaleString(
+                      "tr-TR"
+                    )}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* TAHSİLAT MODAL */}
+      {/* TAHSİLAT MODALI */}
       {showPaymentModal &&
         selectedCustomer && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
-              <div className="border-b border-slate-200 p-6">
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-4"
+            onMouseDown={(event) => {
+              if (
+                event.target ===
+                event.currentTarget
+              ) {
+                if (!savingPayment) {
+                  setShowPaymentModal(
+                    false
+                  );
+                }
+              }
+            }}
+          >
+            <div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white shadow-2xl">
+              <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 py-5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-xl font-bold text-slate-900">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-green-600">
+                      Finansal İşlem
+                    </p>
+
+                    <h2 className="mt-1 text-xl font-black text-slate-900">
                       Tahsilat Ekle
                     </h2>
 
@@ -2151,7 +2492,7 @@ export default function CariPage() {
                     disabled={
                       savingPayment
                     }
-                    className="rounded-lg px-3 py-2 text-xl text-slate-400 hover:bg-slate-100 disabled:opacity-50"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl text-2xl text-slate-400 hover:bg-slate-100 disabled:opacity-40"
                   >
                     ×
                   </button>
@@ -2159,12 +2500,12 @@ export default function CariPage() {
               </div>
 
               <div className="space-y-5 p-6">
-                <div className="rounded-xl bg-red-50 p-4">
-                  <p className="text-xs font-semibold text-red-400">
-                    MEVCUT MÜŞTERİ BORCU
+                <div className="rounded-2xl bg-red-50 p-5">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-red-400">
+                    Mevcut Cari Borç
                   </p>
 
-                  <p className="mt-1 text-2xl font-bold text-red-600">
+                  <p className="mt-2 text-3xl font-black text-red-600">
                     {formatPrice(
                       selectedCustomer.balance
                     )}{" "}
@@ -2173,7 +2514,7 @@ export default function CariPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
                     Tahsilat Tutarı
                   </label>
 
@@ -2186,25 +2527,25 @@ export default function CariPage() {
                       }
                       onChange={(e) =>
                         setPaymentAmount(
-                          e.target
-                            .value
+                          e.target.value
                         )
                       }
                       placeholder="0,00"
                       disabled={
                         savingPayment
                       }
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-12 text-lg font-semibold outline-none focus:border-slate-900 disabled:bg-slate-100"
+                      autoFocus
+                      className="w-full rounded-xl border border-slate-300 px-4 py-4 pr-12 text-xl font-black outline-none transition focus:border-slate-900 focus:ring-4 focus:ring-slate-100 disabled:bg-slate-100"
                     />
 
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 font-semibold text-slate-400">
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 font-black text-slate-400">
                       ₺
                     </span>
                   </div>
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
                     Ödeme Yöntemi
                   </label>
 
@@ -2222,8 +2563,7 @@ export default function CariPage() {
                       );
 
                       if (
-                        method ===
-                        "Nakit"
+                        method === "Nakit"
                       ) {
                         setSelectedBankAccountId(
                           ""
@@ -2259,7 +2599,7 @@ export default function CariPage() {
                     disabled={
                       savingPayment
                     }
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-semibold outline-none focus:border-slate-900"
                   >
                     <option value="Nakit">
                       Nakit
@@ -2278,20 +2618,14 @@ export default function CariPage() {
                 {paymentMethod ===
                   "Nakit" && (
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
                       Kasa Hesabı
                     </label>
 
                     {cashAccounts.length ===
                     0 ? (
-                      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                        <p className="text-sm font-semibold text-red-700">
-                          Aktif kasa hesabı bulunamadı.
-                        </p>
-
-                        <p className="mt-1 text-xs text-red-500">
-                          Supabase RLS politikalarını ve oturum yetkisini kontrol edin.
-                        </p>
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                        Aktif kasa hesabı bulunamadı.
                       </div>
                     ) : (
                       <>
@@ -2308,16 +2642,14 @@ export default function CariPage() {
                           disabled={
                             savingPayment
                           }
-                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-semibold outline-none focus:border-slate-900"
                         >
                           <option value="">
                             Kasa seçin
                           </option>
 
                           {cashAccounts.map(
-                            (
-                              account
-                            ) => (
+                            (account) => (
                               <option
                                 key={
                                   account.id
@@ -2340,19 +2672,17 @@ export default function CariPage() {
                         </select>
 
                         {selectedCashAccount && (
-                          <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-slate-500">
-                                Mevcut kasa bakiyesi
-                              </span>
+                          <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+                            <span className="text-xs text-slate-500">
+                              Mevcut bakiye
+                            </span>
 
-                              <span className="text-sm font-bold text-slate-900">
-                                {formatPrice(
-                                  selectedCashAccount.balance
-                                )}{" "}
-                                ₺
-                              </span>
-                            </div>
+                            <span className="font-black text-slate-900">
+                              {formatPrice(
+                                selectedCashAccount.balance
+                              )}{" "}
+                              ₺
+                            </span>
                           </div>
                         )}
                       </>
@@ -2362,20 +2692,14 @@ export default function CariPage() {
 
                 {isBankPayment && (
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
                       Banka Hesabı
                     </label>
 
                     {bankAccounts.length ===
                     0 ? (
-                      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                        <p className="text-sm font-semibold text-red-700">
-                          Aktif banka hesabı bulunamadı.
-                        </p>
-
-                        <p className="mt-1 text-xs text-red-500">
-                          Havale/EFT tahsilatı için en az bir aktif banka hesabı oluşturmalısınız.
-                        </p>
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                        Aktif banka hesabı bulunamadı.
                       </div>
                     ) : (
                       <>
@@ -2392,16 +2716,14 @@ export default function CariPage() {
                           disabled={
                             savingPayment
                           }
-                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-semibold outline-none focus:border-slate-900"
                         >
                           <option value="">
                             Banka hesabı seçin
                           </option>
 
                           {bankAccounts.map(
-                            (
-                              account
-                            ) => (
+                            (account) => (
                               <option
                                 key={
                                   account.id
@@ -2428,13 +2750,13 @@ export default function CariPage() {
                         </select>
 
                         {selectedBankAccount && (
-                          <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2">
+                          <div className="mt-2 rounded-xl bg-slate-50 p-4">
                             <div className="flex items-center justify-between">
                               <span className="text-xs text-slate-500">
-                                Mevcut banka bakiyesi
+                                Mevcut bakiye
                               </span>
 
-                              <span className="text-sm font-bold text-slate-900">
+                              <span className="font-black text-slate-900">
                                 {formatPrice(
                                   selectedBankAccount.balance
                                 )}{" "}
@@ -2443,7 +2765,7 @@ export default function CariPage() {
                             </div>
 
                             {selectedBankAccount.iban && (
-                              <p className="mt-1 break-all text-[11px] text-slate-400">
+                              <p className="mt-2 break-all text-[11px] text-slate-400">
                                 {
                                   selectedBankAccount.iban
                                 }
@@ -2456,40 +2778,36 @@ export default function CariPage() {
                   </div>
                 )}
 
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                <div className="rounded-2xl border border-green-200 bg-green-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-green-600">
                     Finansal Etki
                   </p>
 
-                  <p className="mt-1 text-sm text-slate-700">
-                    {paymentMethod ===
-                    "Nakit" ? (
-                      <>
-                        Tahsilat{" "}
-                        <strong>
-                          {
-                            selectedCashAccount?.name ||
-                            "seçilecek kasa"
-                          }
-                        </strong>{" "}
-                        hesabına eklenecek.
-                      </>
-                    ) : (
-                      <>
-                        Tahsilat{" "}
-                        <strong>
-                          {selectedBankAccount
-                            ? `${selectedBankAccount.bank_name} - ${selectedBankAccount.account_name}`
-                            : "seçilecek banka hesabına"}
-                        </strong>{" "}
-                        hesabına eklenecek.
-                      </>
-                    )}
+                  <p className="mt-1 text-sm leading-6 text-green-800">
+                    <strong>
+                      {formatPrice(
+                        parsePaymentAmount(
+                          paymentAmount
+                        ) || 0
+                      )}{" "}
+                      ₺
+                    </strong>{" "}
+                    tahsilat{" "}
+                    <strong>
+                      {paymentMethod ===
+                      "Nakit"
+                        ? selectedCashAccount?.name ||
+                          "seçilecek kasa"
+                        : selectedBankAccount
+                        ? `${selectedBankAccount.bank_name} - ${selectedBankAccount.account_name}`
+                        : "seçilecek banka hesabı"}
+                    </strong>{" "}
+                    hesabına eklenecek.
                   </p>
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
                     Açıklama
                   </label>
 
@@ -2499,8 +2817,7 @@ export default function CariPage() {
                     }
                     onChange={(e) =>
                       setPaymentNote(
-                        e.target
-                          .value
+                        e.target.value
                       )
                     }
                     placeholder="Ödeme ile ilgili not..."
@@ -2508,12 +2825,12 @@ export default function CariPage() {
                     disabled={
                       savingPayment
                     }
-                    className="w-full resize-none rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                    className="w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-900"
                   />
                 </div>
               </div>
 
-              <div className="flex gap-3 border-t border-slate-200 p-6">
+              <div className="flex gap-3 border-t border-slate-200 bg-slate-50 p-6">
                 <button
                   type="button"
                   onClick={() =>
@@ -2524,16 +2841,14 @@ export default function CariPage() {
                   disabled={
                     savingPayment
                   }
-                  className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                 >
                   Vazgeç
                 </button>
 
                 <button
                   type="button"
-                  onClick={
-                    addPayment
-                  }
+                  onClick={addPayment}
                   disabled={
                     savingPayment ||
                     !hasRequiredPaymentAccount ||
@@ -2545,7 +2860,7 @@ export default function CariPage() {
                       bankAccounts.length ===
                         0)
                   }
-                  className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex-1 rounded-xl bg-green-600 px-4 py-3.5 text-sm font-black text-white shadow-sm hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {savingPayment
                     ? "Kaydediliyor..."
@@ -2556,15 +2871,33 @@ export default function CariPage() {
           </div>
         )}
 
-      {/* MÜŞTERİ PARA İADESİ MODAL */}
+      {/* MÜŞTERİ İADE MODALI */}
       {showRefundModal &&
         selectedCustomer && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
-            <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
-              <div className="border-b border-slate-200 p-6">
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-4"
+            onMouseDown={(event) => {
+              if (
+                event.target ===
+                event.currentTarget
+              ) {
+                if (!savingRefund) {
+                  setShowRefundModal(
+                    false
+                  );
+                }
+              }
+            }}
+          >
+            <div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white shadow-2xl">
+              <div className="sticky top-0 z-10 border-b border-slate-200 bg-white px-6 py-5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-xl font-bold text-slate-900">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-orange-500">
+                      Finansal İşlem
+                    </p>
+
+                    <h2 className="mt-1 text-xl font-black text-slate-900">
                       Müşteriye Para İadesi
                     </h2>
 
@@ -2585,7 +2918,7 @@ export default function CariPage() {
                     disabled={
                       savingRefund
                     }
-                    className="rounded-lg px-3 py-2 text-xl text-slate-400 hover:bg-slate-100 disabled:opacity-50"
+                    className="flex h-10 w-10 items-center justify-center rounded-xl text-2xl text-slate-400 hover:bg-slate-100 disabled:opacity-40"
                   >
                     ×
                   </button>
@@ -2593,13 +2926,12 @@ export default function CariPage() {
               </div>
 
               <div className="space-y-5 p-6">
-                {/* ALACAK */}
-                <div className="rounded-xl bg-blue-50 p-4">
-                  <p className="text-xs font-semibold text-blue-500">
-                    MÜŞTERİNİN ALACAĞI
+                <div className="rounded-2xl bg-blue-50 p-5">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-blue-500">
+                    Müşterinin Alacağı
                   </p>
 
-                  <p className="mt-1 text-2xl font-bold text-blue-700">
+                  <p className="mt-2 text-3xl font-black text-blue-700">
                     {formatPrice(
                       Math.abs(
                         selectedCustomer.balance
@@ -2609,9 +2941,8 @@ export default function CariPage() {
                   </p>
                 </div>
 
-                {/* TUTAR */}
                 <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
                     İade Tutarı
                   </label>
 
@@ -2624,23 +2955,23 @@ export default function CariPage() {
                       }
                       onChange={(e) =>
                         setRefundAmount(
-                          e.target
-                            .value
+                          e.target.value
                         )
                       }
                       placeholder="0,00"
                       disabled={
                         savingRefund
                       }
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-12 text-lg font-semibold outline-none focus:border-slate-900 disabled:bg-slate-100"
+                      autoFocus
+                      className="w-full rounded-xl border border-slate-300 px-4 py-4 pr-12 text-xl font-black outline-none focus:border-slate-900 focus:ring-4 focus:ring-slate-100"
                     />
 
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 font-semibold text-slate-400">
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 font-black text-slate-400">
                       ₺
                     </span>
                   </div>
 
-                  <p className="mt-1 text-xs text-slate-400">
+                  <p className="mt-2 text-xs text-slate-400">
                     En fazla{" "}
                     {formatPrice(
                       Math.abs(
@@ -2651,9 +2982,8 @@ export default function CariPage() {
                   </p>
                 </div>
 
-                {/* ÖDEME YÖNTEMİ */}
                 <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
                     İade Yöntemi
                   </label>
 
@@ -2671,8 +3001,7 @@ export default function CariPage() {
                       );
 
                       if (
-                        method ===
-                        "Nakit"
+                        method === "Nakit"
                       ) {
                         setSelectedRefundBankAccountId(
                           ""
@@ -2708,7 +3037,7 @@ export default function CariPage() {
                     disabled={
                       savingRefund
                     }
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-semibold outline-none focus:border-slate-900"
                   >
                     <option value="Nakit">
                       Nakit
@@ -2724,19 +3053,16 @@ export default function CariPage() {
                   </select>
                 </div>
 
-                {/* KASA */}
                 {!isBankRefund && (
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
                       Para Çıkacak Kasa
                     </label>
 
                     {cashAccounts.length ===
                     0 ? (
-                      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                        <p className="text-sm font-semibold text-red-700">
-                          Aktif kasa hesabı bulunamadı.
-                        </p>
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                        Aktif kasa hesabı bulunamadı.
                       </div>
                     ) : (
                       <>
@@ -2753,16 +3079,14 @@ export default function CariPage() {
                           disabled={
                             savingRefund
                           }
-                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-semibold outline-none focus:border-slate-900"
                         >
                           <option value="">
                             Kasa seçin
                           </option>
 
                           {cashAccounts.map(
-                            (
-                              account
-                            ) => (
+                            (account) => (
                               <option
                                 key={
                                   account.id
@@ -2785,19 +3109,17 @@ export default function CariPage() {
                         </select>
 
                         {selectedRefundCashAccount && (
-                          <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs text-slate-500">
-                                Mevcut kasa bakiyesi
-                              </span>
+                          <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3">
+                            <span className="text-xs text-slate-500">
+                              Mevcut bakiye
+                            </span>
 
-                              <span className="text-sm font-bold text-slate-900">
-                                {formatPrice(
-                                  selectedRefundCashAccount.balance
-                                )}{" "}
-                                ₺
-                              </span>
-                            </div>
+                            <span className="font-black text-slate-900">
+                              {formatPrice(
+                                selectedRefundCashAccount.balance
+                              )}{" "}
+                              ₺
+                            </span>
                           </div>
                         )}
                       </>
@@ -2805,19 +3127,16 @@ export default function CariPage() {
                   </div>
                 )}
 
-                {/* BANKA */}
                 {isBankRefund && (
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-700">
+                    <label className="mb-2 block text-sm font-bold text-slate-700">
                       Para Çıkacak Banka
                     </label>
 
                     {bankAccounts.length ===
                     0 ? (
-                      <div className="rounded-xl border border-red-200 bg-red-50 p-4">
-                        <p className="text-sm font-semibold text-red-700">
-                          Aktif banka hesabı bulunamadı.
-                        </p>
+                      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                        Aktif banka hesabı bulunamadı.
                       </div>
                     ) : (
                       <>
@@ -2834,16 +3153,14 @@ export default function CariPage() {
                           disabled={
                             savingRefund
                           }
-                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-semibold outline-none focus:border-slate-900"
                         >
                           <option value="">
                             Banka hesabı seçin
                           </option>
 
                           {bankAccounts.map(
-                            (
-                              account
-                            ) => (
+                            (account) => (
                               <option
                                 key={
                                   account.id
@@ -2870,13 +3187,13 @@ export default function CariPage() {
                         </select>
 
                         {selectedRefundBankAccount && (
-                          <div className="mt-2 rounded-lg bg-slate-50 px-3 py-2">
+                          <div className="mt-2 rounded-xl bg-slate-50 p-4">
                             <div className="flex items-center justify-between">
                               <span className="text-xs text-slate-500">
-                                Mevcut banka bakiyesi
+                                Mevcut bakiye
                               </span>
 
-                              <span className="text-sm font-bold text-slate-900">
+                              <span className="font-black text-slate-900">
                                 {formatPrice(
                                   selectedRefundBankAccount.balance
                                 )}{" "}
@@ -2885,7 +3202,7 @@ export default function CariPage() {
                             </div>
 
                             {selectedRefundBankAccount.iban && (
-                              <p className="mt-1 break-all text-[11px] text-slate-400">
+                              <p className="mt-2 break-all text-[11px] text-slate-400">
                                 {
                                   selectedRefundBankAccount.iban
                                 }
@@ -2898,58 +3215,36 @@ export default function CariPage() {
                   </div>
                 )}
 
-                {/* FİNANSAL ETKİ */}
-                <div className="rounded-xl border border-orange-200 bg-orange-50 p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-orange-500">
+                <div className="rounded-2xl border border-orange-200 bg-orange-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-orange-500">
                     Finansal Etki
                   </p>
 
-                  <p className="mt-1 text-sm text-orange-800">
-                    {refundPaymentMethod ===
-                    "Nakit" ? (
-                      <>
-                        <strong>
-                          {formatPrice(
-                            parsePaymentAmount(
-                              refundAmount
-                            ) || 0
-                          )}{" "}
-                          ₺
-                        </strong>{" "}
-                        tutar{" "}
-                        <strong>
-                          {
-                            selectedRefundCashAccount?.name ||
-                            "seçilecek kasa"
-                          }
-                        </strong>{" "}
-                        hesabından çıkacak.
-                      </>
-                    ) : (
-                      <>
-                        <strong>
-                          {formatPrice(
-                            parsePaymentAmount(
-                              refundAmount
-                            ) || 0
-                          )}{" "}
-                          ₺
-                        </strong>{" "}
-                        tutar{" "}
-                        <strong>
-                          {selectedRefundBankAccount
-                            ? `${selectedRefundBankAccount.bank_name} - ${selectedRefundBankAccount.account_name}`
-                            : "seçilecek banka hesabından"}
-                        </strong>{" "}
-                        hesabından çıkacak.
-                      </>
-                    )}
+                  <p className="mt-1 text-sm leading-6 text-orange-800">
+                    <strong>
+                      {formatPrice(
+                        parsePaymentAmount(
+                          refundAmount
+                        ) || 0
+                      )}{" "}
+                      ₺
+                    </strong>{" "}
+                    tutar{" "}
+                    <strong>
+                      {refundPaymentMethod ===
+                      "Nakit"
+                        ? selectedRefundCashAccount?.name ||
+                          "seçilecek kasa"
+                        : selectedRefundBankAccount
+                        ? `${selectedRefundBankAccount.bank_name} - ${selectedRefundBankAccount.account_name}`
+                        : "seçilecek banka hesabı"}
+                    </strong>{" "}
+                    hesabından çıkacak.
                   </p>
                 </div>
 
-                {/* AÇIKLAMA */}
                 <div>
-                  <label className="mb-2 block text-sm font-semibold text-slate-700">
+                  <label className="mb-2 block text-sm font-bold text-slate-700">
                     Açıklama
                   </label>
 
@@ -2959,8 +3254,7 @@ export default function CariPage() {
                     }
                     onChange={(e) =>
                       setRefundNote(
-                        e.target
-                          .value
+                        e.target.value
                       )
                     }
                     placeholder="İade ile ilgili not..."
@@ -2968,12 +3262,12 @@ export default function CariPage() {
                     disabled={
                       savingRefund
                     }
-                    className="w-full resize-none rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-slate-900 disabled:bg-slate-100"
+                    className="w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-900"
                   />
                 </div>
               </div>
 
-              <div className="flex gap-3 border-t border-slate-200 p-6">
+              <div className="flex gap-3 border-t border-slate-200 bg-slate-50 p-6">
                 <button
                   type="button"
                   onClick={() =>
@@ -2984,7 +3278,7 @@ export default function CariPage() {
                   disabled={
                     savingRefund
                   }
-                  className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                 >
                   Vazgeç
                 </button>
@@ -3004,7 +3298,7 @@ export default function CariPage() {
                       bankAccounts.length ===
                         0)
                   }
-                  className="flex-1 rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex-1 rounded-xl bg-orange-500 px-4 py-3.5 text-sm font-black text-white shadow-sm hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {savingRefund
                     ? "İade Yapılıyor..."
@@ -3023,6 +3317,7 @@ export default function CariPage() {
             margin: 12mm;
           }
 
+          html,
           body {
             background: white !important;
           }
@@ -3039,8 +3334,10 @@ export default function CariPage() {
           .cari-print-modal {
             position: absolute !important;
             inset: 0 !important;
-            background: white !important;
             display: block !important;
+            width: 100% !important;
+            height: auto !important;
+            background: white !important;
           }
 
           .cari-print-card {
@@ -3048,13 +3345,14 @@ export default function CariPage() {
             max-width: none !important;
             max-height: none !important;
             overflow: visible !important;
-            box-shadow: none !important;
             border-radius: 0 !important;
+            box-shadow: none !important;
           }
 
           .cari-print-scroll {
             max-height: none !important;
             overflow: visible !important;
+            padding: 0 !important;
           }
 
           .print\\:hidden {
@@ -3067,14 +3365,19 @@ export default function CariPage() {
 
           table {
             width: 100% !important;
+            border-collapse: collapse !important;
+          }
+
+          th,
+          td {
+            border-bottom: 1px solid #ddd !important;
           }
 
           .overflow-x-auto {
             overflow: visible !important;
           }
         }
-      `}
-      </style>
+      `}</style>
     </div>
   );
 }

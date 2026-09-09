@@ -7,6 +7,7 @@ import { supabase } from "../lib/supabase";
 type Product = {
   id: string;
   product_name: string;
+  sku: string | null;
   barcode: string | null;
   category: string | null;
   stock: number;
@@ -36,24 +37,132 @@ type OrderInfo = {
 };
 
 const movementLabels: Record<string, string> = {
-  purchase: "Alış",
+  purchase: "Stok Girişi",
+  purchase_cancel: "Alış İptali",
   sale: "Satış",
+  sale_cancel: "Satış İptali",
   return: "İade",
   adjustment_in: "Stok Girişi",
   adjustment_out: "Stok Çıkışı",
-  damage: "Hasarlı",
+  damage: "Hasarlı Ürün",
   count: "Sayım",
 };
 
 const movementIcons: Record<string, string> = {
   purchase: "📥",
+  purchase_cancel: "📤",
   sale: "📤",
+  sale_cancel: "📥",
   return: "↩️",
   adjustment_in: "➕",
   adjustment_out: "➖",
   damage: "🗑️",
   count: "📊",
 };
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("tr-TR", {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function formatDate(date: string) {
+  return new Intl.DateTimeFormat("tr-TR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(date));
+}
+
+function getMovementClass(type: string) {
+  if (
+    type === "purchase" ||
+    type === "return" ||
+    type === "adjustment_in" ||
+    type === "sale_cancel"
+  ) {
+    return "text-green-600";
+  }
+
+  if (
+    type === "sale" ||
+    type === "purchase_cancel" ||
+    type === "adjustment_out" ||
+    type === "damage"
+  ) {
+    return "text-red-600";
+  }
+
+  return "text-blue-600";
+}
+
+/**
+ * Stok hareketindeki gerçek DB miktarını gösterir.
+ *
+ * Önemli:
+ * stock_movements.quantity alanı hareketin gerçek
+ * stok değişimini tutar.
+ *
+ * Örnek:
+ *  +10 => stok 750 -> 760
+ *  -10 => stok 760 -> 750
+ *
+ * Bu nedenle purchase_cancel gibi hareketleri
+ * varsayılan olarak "+" yapmıyoruz.
+ */
+function getMovementQuantity(
+  type: string,
+  quantity: number
+) {
+  const value = Number(quantity || 0);
+
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+
+  if (value > 0) {
+    return `+${formatNumber(value)}`;
+  }
+
+  if (value < 0) {
+    return `-${formatNumber(Math.abs(value))}`;
+  }
+
+  return "0";
+}
+
+/**
+ * Geçmişte özellikle sayım hareketinin miktarı,
+ * RPC tarafından stok farkı olarak kaydediliyor.
+ *
+ * Yine de stock_before / stock_after mevcutsa
+ * gerçek farkı esas alıyoruz.
+ */
+function getHistoryQuantity(movement: StockMovement) {
+  if (
+    movement.movement_type === "count" &&
+    movement.stock_before !== null &&
+    movement.stock_after !== null
+  ) {
+    const difference =
+      Number(movement.stock_after) -
+      Number(movement.stock_before);
+
+    if (difference > 0) {
+      return `+${formatNumber(difference)}`;
+    }
+
+    if (difference < 0) {
+      return `-${formatNumber(Math.abs(difference))}`;
+    }
+
+    return "0";
+  }
+
+  return getMovementQuantity(
+    movement.movement_type,
+    Number(movement.quantity || 0)
+  );
+}
 
 export default function StockPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -62,6 +171,9 @@ export default function StockPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [loadError, setLoadError] = useState("");
 
   const [search, setSearch] = useState("");
   const [productFilter, setProductFilter] = useState("");
@@ -75,10 +187,8 @@ export default function StockPage() {
     useState("");
 
   const [quantity, setQuantity] = useState("");
-
   const [note, setNote] = useState("");
 
-  // STOK GEÇMİŞİ
   const [historyProduct, setHistoryProduct] =
     useState<Product | null>(null);
 
@@ -88,8 +198,14 @@ export default function StockPage() {
   const [historyLoading, setHistoryLoading] =
     useState(false);
 
-  async function loadData() {
-    setLoading(true);
+  async function loadData(showRefresh = false) {
+    if (showRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    setLoadError("");
 
     const [
       productsResult,
@@ -99,10 +215,12 @@ export default function StockPage() {
       supabase
         .from("products")
         .select(
-          "id, product_name, barcode, category, stock, min_stock, unit"
+          "id, product_name, sku, barcode, category, stock, min_stock, unit"
         )
         .eq("is_active", true)
-        .order("product_name"),
+        .order("product_name", {
+          ascending: true,
+        }),
 
       supabase
         .from("stock_movements")
@@ -136,16 +254,21 @@ export default function StockPage() {
         }),
     ]);
 
-    if (productsResult.error) {
-      console.error(productsResult.error);
-    }
+    const errors = [
+      productsResult.error,
+      movementsResult.error,
+      ordersResult.error,
+    ].filter(Boolean);
 
-    if (movementsResult.error) {
-      console.error(movementsResult.error);
-    }
+    if (errors.length > 0) {
+      console.error(
+        "Stok verileri yüklenirken hata:",
+        errors
+      );
 
-    if (ordersResult.error) {
-      console.error(ordersResult.error);
+      setLoadError(
+        "Stok verileri yüklenirken bir hata oluştu. Lütfen tekrar deneyin."
+      );
     }
 
     setProducts(
@@ -153,14 +276,15 @@ export default function StockPage() {
     );
 
     setMovements(
-  (movementsResult.data ?? []) as unknown as StockMovement[]
-);
+      (movementsResult.data || []) as unknown as StockMovement[]
+    );
 
     setOrders(
       (ordersResult.data || []) as OrderInfo[]
     );
 
     setLoading(false);
+    setRefreshing(false);
   }
 
   useEffect(() => {
@@ -178,19 +302,24 @@ export default function StockPage() {
   }, [orders]);
 
   const filteredProducts = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = search
+      .trim()
+      .toLocaleLowerCase("tr-TR");
 
     return products.filter((product) => {
       const matchesSearch =
         !query ||
         product.product_name
-          .toLowerCase()
+          .toLocaleLowerCase("tr-TR")
+          .includes(query) ||
+        (product.sku || "")
+          .toLocaleLowerCase("tr-TR")
           .includes(query) ||
         (product.barcode || "")
-          .toLowerCase()
+          .toLocaleLowerCase("tr-TR")
           .includes(query) ||
         (product.category || "")
-          .toLowerCase()
+          .toLocaleLowerCase("tr-TR")
           .includes(query);
 
       const matchesFilter =
@@ -217,23 +346,34 @@ export default function StockPage() {
     ).length;
   }, [products]);
 
+  const outOfStock = useMemo(() => {
+    return products.filter(
+      (product) =>
+        Number(product.stock || 0) <= 0
+    ).length;
+  }, [products]);
+
   const selectedProduct = products.find(
-    (product) => product.id === selectedProductId
+    (product) =>
+      product.id === selectedProductId
   );
 
-  const enteredQuantity = Number(quantity || 0);
+  const enteredQuantity =
+    quantity.trim() === ""
+      ? NaN
+      : Number(quantity);
 
   const previewStock = useMemo(() => {
-    if (!selectedProduct) {
+    if (
+      !selectedProduct ||
+      Number.isNaN(enteredQuantity)
+    ) {
       return null;
     }
 
-    const current = Number(
-      selectedProduct.stock || 0
-    );
+    const current =
+      Number(selectedProduct.stock || 0);
 
-    // STOK SAYIMI:
-    // Girilen miktar doğrudan yeni stok miktarıdır.
     if (movementType === "count") {
       return enteredQuantity;
     }
@@ -252,6 +392,16 @@ export default function StockPage() {
     enteredQuantity,
   ]);
 
+  const isQuantityValid =
+    quantity.trim() !== "" &&
+    Number.isFinite(enteredQuantity) &&
+    enteredQuantity >= 0 &&
+    (
+      movementType === "count"
+        ? true
+        : enteredQuantity > 0
+    );
+
   function openModal() {
     setMovementType("purchase");
     setSelectedProductId("");
@@ -266,9 +416,7 @@ export default function StockPage() {
     setShowModal(false);
   }
 
-  async function openStockHistory(
-    product: Product
-  ) {
+  async function openStockHistory(product: Product) {
     setHistoryProduct(product);
     setHistoryMovements([]);
     setHistoryLoading(true);
@@ -298,7 +446,11 @@ export default function StockPage() {
       });
 
     if (error) {
-      console.error(error);
+      console.error(
+        "Stok geçmişi yüklenirken hata:",
+        error
+      );
+
       alert(
         error.message ||
           "Stok geçmişi yüklenirken hata oluştu."
@@ -309,8 +461,9 @@ export default function StockPage() {
     }
 
     setHistoryMovements(
-  (data ?? []) as unknown as StockMovement[]
-);
+      (data || []) as unknown as StockMovement[]
+    );
+
     setHistoryLoading(false);
   }
 
@@ -327,9 +480,33 @@ export default function StockPage() {
       return;
     }
 
-    if (!quantity || enteredQuantity <= 0) {
-      alert("Miktar 0'dan büyük olmalıdır.");
+    if (
+      quantity.trim() === "" ||
+      !Number.isFinite(enteredQuantity)
+    ) {
+      alert(
+        movementType === "count"
+          ? "Lütfen sayım miktarını girin."
+          : "Lütfen geçerli bir miktar girin."
+      );
       return;
+    }
+
+    // Sayımda 0 geçerlidir.
+    if (movementType === "count") {
+      if (enteredQuantity < 0) {
+        alert(
+          "Sayım miktarı 0 veya daha büyük olmalıdır."
+        );
+        return;
+      }
+    } else {
+      if (enteredQuantity <= 0) {
+        alert(
+          "Miktar 0'dan büyük olmalıdır."
+        );
+        return;
+      }
     }
 
     if (
@@ -344,18 +521,8 @@ export default function StockPage() {
     ) {
       alert(
         `Yetersiz stok. Mevcut stok: ${formatNumber(
-          selectedProduct.stock
+          Number(selectedProduct.stock || 0)
         )}`
-      );
-      return;
-    }
-
-    if (
-      movementType === "count" &&
-      enteredQuantity < 0
-    ) {
-      alert(
-        "Sayım miktarı negatif olamaz."
       );
       return;
     }
@@ -373,7 +540,10 @@ export default function StockPage() {
     );
 
     if (error) {
-      console.error(error);
+      console.error(
+        "Stok işlemi hatası:",
+        error
+      );
 
       alert(
         error.message ||
@@ -387,145 +557,87 @@ export default function StockPage() {
     setSaving(false);
     setShowModal(false);
 
-    await loadData();
+    await loadData(true);
 
     alert(
       "Stok işlemi başarıyla kaydedildi."
     );
   }
 
-  function formatNumber(value: number) {
-    return new Intl.NumberFormat("tr-TR", {
-      maximumFractionDigits: 2,
-    }).format(value);
-  }
-
-  function formatDate(date: string) {
-    return new Intl.DateTimeFormat("tr-TR", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(new Date(date));
-  }
-
-  function getMovementClass(type: string) {
-    if (
-      type === "purchase" ||
-      type === "return" ||
-      type === "adjustment_in"
-    ) {
-      return "text-green-600";
-    }
-
-    if (
-      type === "sale" ||
-      type === "adjustment_out" ||
-      type === "damage"
-    ) {
-      return "text-red-600";
-    }
-
-    return "text-blue-600";
-  }
-
-  function getMovementQuantity(
-    type: string,
-    quantity: number
-  ) {
-    if (
-      type === "sale" ||
-      type === "adjustment_out" ||
-      type === "damage"
-    ) {
-      return `-${formatNumber(
-        Math.abs(quantity)
-      )}`;
-    }
-
-    if (type === "count") {
-      return formatNumber(quantity);
-    }
-
-    return `+${formatNumber(
-      Math.abs(quantity)
-    )}`;
-  }
-
-  function getHistoryQuantity(
-    movement: StockMovement
-  ) {
-    const quantity = Number(
-      movement.quantity || 0
-    );
-
-    if (movement.movement_type === "count") {
-      if (
-        movement.stock_before !== null &&
-        movement.stock_after !== null
-      ) {
-        const difference =
-          Number(movement.stock_after) -
-          Number(movement.stock_before);
-
-        if (difference > 0) {
-          return `+${formatNumber(difference)}`;
-        }
-
-        if (difference < 0) {
-          return `-${formatNumber(
-            Math.abs(difference)
-          )}`;
-        }
-
-        return "0";
-      }
-
-      return formatNumber(quantity);
-    }
-
-    return getMovementQuantity(
-      movement.movement_type,
-      quantity
-    );
-  }
-
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-slate-50 p-4 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
 
         {/* HEADER */}
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">
-              Stok Yönetimi
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
+                Stok Yönetimi
+              </h1>
+
+              {refreshing && (
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600">
+                  Güncelleniyor...
+                </span>
+              )}
+            </div>
 
             <p className="mt-1 text-sm text-slate-500">
               Ürün stoklarını ve tüm stok hareketlerini takip et.
             </p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              onClick={() => loadData(true)}
+              disabled={refreshing || loading}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              ↻ Yenile
+            </button>
 
             <Link
               href="/siparisler"
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-center text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
             >
               + Yeni Sipariş
             </Link>
 
             <button
               onClick={openModal}
-              className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+              className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
             >
               + Stok İşlemi
             </button>
-
           </div>
         </div>
 
+        {/* ERROR */}
+        {loadError && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-red-800">
+                Veri yükleme hatası
+              </p>
+
+              <p className="mt-1 text-xs text-red-600">
+                {loadError}
+              </p>
+            </div>
+
+            <button
+              onClick={() => loadData(true)}
+              className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-700"
+            >
+              Tekrar Dene
+            </button>
+          </div>
+        )}
+
         {/* SUMMARY */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">
@@ -571,6 +683,20 @@ export default function StockPage() {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">
+              Stok Yok
+            </p>
+
+            <p className="mt-2 text-3xl font-bold text-orange-600">
+              {outOfStock}
+            </p>
+
+            <p className="mt-1 text-xs text-slate-400">
+              Stoğu 0 olan ürünler
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">
               Stok Hareketi
             </p>
 
@@ -588,7 +714,7 @@ export default function StockPage() {
         {/* FILTERS */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
 
             <div>
               <label className="mb-2 block text-sm font-semibold text-slate-700">
@@ -600,8 +726,8 @@ export default function StockPage() {
                 onChange={(e) =>
                   setSearch(e.target.value)
                 }
-                placeholder="Ürün adı, barkod veya kategori..."
-                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                placeholder="Ürün adı, SKU, barkod veya kategori..."
+                className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
               />
             </div>
 
@@ -615,7 +741,7 @@ export default function StockPage() {
                 onChange={(e) =>
                   setProductFilter(e.target.value)
                 }
-                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-slate-400"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
               >
                 <option value="">
                   Tüm Ürünler
@@ -633,6 +759,24 @@ export default function StockPage() {
             </div>
 
           </div>
+
+          {(search || productFilter) && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500">
+                {filteredProducts.length} ürün gösteriliyor
+              </span>
+
+              <button
+                onClick={() => {
+                  setSearch("");
+                  setProductFilter("");
+                }}
+                className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+              >
+                Filtreleri Temizle
+              </button>
+            </div>
+          )}
         </div>
 
         {/* STOCK TABLE */}
@@ -649,23 +793,41 @@ export default function StockPage() {
           </div>
 
           {loading ? (
-            <div className="p-8 text-center text-sm text-slate-500">
-              Yükleniyor...
+            <div className="space-y-3 p-6">
+              {[1, 2, 3, 4].map((item) => (
+                <div
+                  key={item}
+                  className="h-16 animate-pulse rounded-xl bg-slate-100"
+                />
+              ))}
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
-              Ürün bulunamadı.
+            <div className="p-10 text-center">
+              <div className="text-4xl">
+                📦
+              </div>
+
+              <p className="mt-3 text-sm font-semibold text-slate-700">
+                Ürün bulunamadı.
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                Arama veya filtre kriterlerini değiştirmeyi deneyin.
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
 
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[950px] text-left text-sm">
 
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-
                   <tr>
                     <th className="px-5 py-3">
                       Ürün
+                    </th>
+
+                    <th className="px-5 py-3">
+                      SKU
                     </th>
 
                     <th className="px-5 py-3">
@@ -692,85 +854,84 @@ export default function StockPage() {
                       İşlem
                     </th>
                   </tr>
-
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
 
-                  {filteredProducts.map(
-                    (product) => {
+                  {filteredProducts.map((product) => {
+                    const stock =
+                      Number(product.stock || 0);
 
-                      const stock =
-                        Number(product.stock || 0);
+                    const minStock =
+                      Number(product.min_stock || 0);
 
-                      const minStock =
-                        Number(
-                          product.min_stock || 0
-                        );
+                    const critical =
+                      stock <= minStock;
 
-                      const critical =
-                        stock <= minStock;
+                    const empty =
+                      stock <= 0;
 
-                      return (
-                        <tr
-                          key={product.id}
-                          className="hover:bg-slate-50"
-                        >
-
-                          <td className="px-5 py-4 font-semibold text-slate-900">
+                    return (
+                      <tr
+                        key={product.id}
+                        className="transition hover:bg-slate-50"
+                      >
+                        <td className="px-5 py-4">
+                          <div className="font-semibold text-slate-900">
                             {product.product_name}
-                          </td>
+                          </div>
+                        </td>
 
-                          <td className="px-5 py-4 text-slate-500">
-                            {product.barcode || "-"}
-                          </td>
+                        <td className="px-5 py-4 text-slate-500">
+                          {product.sku || "-"}
+                        </td>
 
-                          <td className="px-5 py-4 text-slate-500">
-                            {product.category || "-"}
-                          </td>
+                        <td className="px-5 py-4 text-slate-500">
+                          {product.barcode || "-"}
+                        </td>
 
-                          <td className="px-5 py-4 font-bold text-slate-900">
-                            {formatNumber(stock)}{" "}
-                            {product.unit || "Adet"}
-                          </td>
+                        <td className="px-5 py-4 text-slate-500">
+                          {product.category || "-"}
+                        </td>
 
-                          <td className="px-5 py-4 text-slate-500">
-                            {formatNumber(minStock)}
-                          </td>
+                        <td className="px-5 py-4 font-bold text-slate-900">
+                          {formatNumber(stock)}{" "}
+                          {product.unit || "Adet"}
+                        </td>
 
-                          <td className="px-5 py-4">
+                        <td className="px-5 py-4 text-slate-500">
+                          {formatNumber(minStock)}
+                        </td>
 
-                            {critical ? (
-                              <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600">
-                                Kritik
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-600">
-                                Normal
-                              </span>
-                            )}
+                        <td className="px-5 py-4">
+                          {empty ? (
+                            <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-600">
+                              Stok Yok
+                            </span>
+                          ) : critical ? (
+                            <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-600">
+                              Kritik
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-600">
+                              Normal
+                            </span>
+                          )}
+                        </td>
 
-                          </td>
-
-                          <td className="px-5 py-4 text-right">
-
-                            <button
-                              onClick={() =>
-                                openStockHistory(
-                                  product
-                                )
-                              }
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
-                            >
-                              📜 Stok Geçmişi
-                            </button>
-
-                          </td>
-
-                        </tr>
-                      );
-                    }
-                  )}
+                        <td className="px-5 py-4 text-right">
+                          <button
+                            onClick={() =>
+                              openStockHistory(product)
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                          >
+                            📜 Stok Geçmişi
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
 
                 </tbody>
 
@@ -784,7 +945,6 @@ export default function StockPage() {
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
 
           <div className="border-b border-slate-200 p-5">
-
             <h2 className="text-lg font-bold text-slate-900">
               Stok Hareketleri
             </h2>
@@ -792,20 +952,24 @@ export default function StockPage() {
             <p className="mt-1 text-sm text-slate-500">
               Son stok giriş ve çıkış hareketleri.
             </p>
-
           </div>
 
           {movements.length === 0 ? (
-            <div className="p-8 text-center text-sm text-slate-500">
-              Henüz stok hareketi bulunmuyor.
+            <div className="p-10 text-center">
+              <div className="text-4xl">
+                📦
+              </div>
+
+              <p className="mt-3 text-sm font-semibold text-slate-700">
+                Henüz stok hareketi bulunmuyor.
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
 
-              <table className="w-full text-left text-sm">
+              <table className="w-full min-w-[900px] text-left text-sm">
 
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-
                   <tr>
                     <th className="px-5 py-3">
                       Tarih
@@ -835,135 +999,103 @@ export default function StockPage() {
                       Açıklama
                     </th>
                   </tr>
-
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
 
-                  {movements.map(
-                    (movement) => {
+                  {movements.map((movement) => {
+                    const orderNumber =
+                      movement.reference_id
+                        ? orderMap[
+                            movement.reference_id
+                          ]
+                        : undefined;
 
-                      const orderNumber =
-                        movement.reference_id
-                          ? orderMap[
-                              movement.reference_id
-                            ]
-                          : undefined;
+                    return (
+                      <tr
+                        key={movement.id}
+                        className="transition hover:bg-slate-50"
+                      >
+                        <td className="whitespace-nowrap px-5 py-4 text-slate-500">
+                          {formatDate(
+                            movement.created_at
+                          )}
+                        </td>
 
-                      return (
-                        <tr
-                          key={movement.id}
-                          className="hover:bg-slate-50"
-                        >
-
-                          <td className="whitespace-nowrap px-5 py-4 text-slate-500">
-                            {formatDate(
-                              movement.created_at
-                            )}
-                          </td>
-
-                          <td className="px-5 py-4">
-
-                            <div className="font-semibold text-slate-900">
-                              {movement.products
-                                ?.product_name ||
-                                "Bilinmeyen ürün"}
-                            </div>
-
+                        <td className="px-5 py-4">
+                          <div className="font-semibold text-slate-900">
                             {movement.products
-                              ?.barcode && (
-                              <div className="text-xs text-slate-400">
-                                {
-                                  movement.products
-                                    .barcode
-                                }
-                              </div>
-                            )}
+                              ?.product_name ||
+                              "Bilinmeyen ürün"}
+                          </div>
 
-                          </td>
+                          {movement.products?.barcode && (
+                            <div className="text-xs text-slate-400">
+                              {movement.products.barcode}
+                            </div>
+                          )}
+                        </td>
 
-                          <td className="px-5 py-4">
-
-                            <span className="font-semibold text-slate-700">
-
-                              {
-                                movementIcons[
-                                  movement
-                                    .movement_type
-                                ] || "•"
-                              }{" "}
-
-                              {
-                                movementLabels[
-                                  movement
-                                    .movement_type
-                                ] ||
-                                  movement
-                                    .movement_type
-                              }
-
-                            </span>
-
-                          </td>
-
-                          <td
-                            className={`px-5 py-4 font-bold ${getMovementClass(
+                        <td className="px-5 py-4">
+                          <span className="font-semibold text-slate-700">
+                            {movementIcons[
                               movement.movement_type
-                            )}`}
-                          >
-                            {getMovementQuantity(
-                              movement.movement_type,
-                              Number(
-                                movement.quantity
-                              )
-                            )}
-                          </td>
+                            ] || "•"}{" "}
+                            {movementLabels[
+                              movement.movement_type
+                            ] ||
+                              movement.movement_type}
+                          </span>
+                        </td>
 
-                          <td className="px-5 py-4 text-slate-500">
+                        <td
+                          className={`px-5 py-4 font-bold ${getMovementClass(
+                            movement.movement_type
+                          )}`}
+                        >
+                          {getMovementQuantity(
+                            movement.movement_type,
+                            Number(
+                              movement.quantity
+                            )
+                          )}
+                        </td>
 
-                            {movement.stock_before ===
-                            null
-                              ? "-"
-                              : formatNumber(
-                                  Number(
-                                    movement.stock_before
-                                  )
-                                )}
+                        <td className="px-5 py-4 text-slate-500">
+                          {movement.stock_before === null
+                            ? "-"
+                            : formatNumber(
+                                Number(
+                                  movement.stock_before
+                                )
+                              )}
+                        </td>
 
-                          </td>
+                        <td className="px-5 py-4 font-semibold text-slate-900">
+                          {movement.stock_after === null
+                            ? "-"
+                            : formatNumber(
+                                Number(
+                                  movement.stock_after
+                                )
+                              )}
+                        </td>
 
-                          <td className="px-5 py-4 font-semibold text-slate-900">
-
-                            {movement.stock_after ===
-                            null
-                              ? "-"
-                              : formatNumber(
-                                  Number(
-                                    movement.stock_after
-                                  )
-                                )}
-
-                          </td>
-
-                          <td className="px-5 py-4 text-slate-500">
-
-                            {orderNumber ? (
-                              <Link
-                                href={`/siparis-gecmisi/${movement.reference_id}`}
-                                className="font-semibold text-blue-600 hover:underline"
-                              >
-                                Sipariş #{orderNumber}
-                              </Link>
-                            ) : (
-                              movement.note || "-"
-                            )}
-
-                          </td>
-
-                        </tr>
-                      );
-                    }
-                  )}
+                        <td className="px-5 py-4 text-slate-500">
+                          {orderNumber ? (
+                            <Link
+                              href={`/siparis-gecmisi/${movement.reference_id}`}
+                              className="font-semibold text-blue-600 hover:underline"
+                            >
+                              Sipariş #{orderNumber}
+                            </Link>
+                          ) : (
+                            movement.note || "-"
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
 
                 </tbody>
 
@@ -978,9 +1110,15 @@ export default function StockPage() {
 
       {/* STOCK MODAL */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              closeModal();
+            }
+          }}
+        >
+          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl">
 
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
 
@@ -996,18 +1134,19 @@ export default function StockPage() {
 
               <button
                 onClick={closeModal}
-                className="rounded-lg px-3 py-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                disabled={saving}
+                className="rounded-lg px-3 py-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                aria-label="Kapat"
               >
                 ✕
               </button>
 
             </div>
 
-            <div className="space-y-5 p-6">
+            <div className="max-h-[75vh] space-y-5 overflow-y-auto p-6">
 
               {/* TYPE */}
               <div>
-
                 <label className="mb-2 block text-sm font-semibold text-slate-700">
                   İşlem Türü
                 </label>
@@ -1019,11 +1158,10 @@ export default function StockPage() {
                       e.target.value
                     )
                   }
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 >
-
                   <option value="purchase">
-                    📥 Stok Girişi / Alış
+                    📥 Stok Girişi
                   </option>
 
                   <option value="adjustment_out">
@@ -1037,37 +1175,36 @@ export default function StockPage() {
                   <option value="count">
                     📊 Stok Sayımı
                   </option>
-
                 </select>
 
                 {movementType === "count" && (
                   <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
-
                     <p className="text-sm font-semibold text-blue-900">
                       📊 Stok Sayımı
                     </p>
 
                     <p className="mt-1 text-xs leading-5 text-blue-700">
-                      Depoda fiziksel olarak
-                      saydığın gerçek stok miktarını
-                      gir. Sistem mevcut stoğu bu
-                      miktara eşitleyecektir.
+                      Depoda fiziksel olarak saydığın gerçek
+                      stok miktarını gir. Sistem mevcut stoğu
+                      bu miktara eşitleyecektir.
                     </p>
 
                     <p className="mt-2 text-xs font-semibold text-blue-800">
                       Örnek: Sistem 100 gösteriyor,
-                      depoda 87 adet varsa buraya
-                      <strong> 87</strong> yaz.
+                      depoda 87 adet varsa buraya{" "}
+                      <strong>87</strong> yaz.
                     </p>
 
+                    <p className="mt-2 text-xs font-semibold text-blue-800">
+                      Depoda hiç ürün yoksa <strong>0</strong>{" "}
+                      girebilirsin.
+                    </p>
                   </div>
                 )}
-
               </div>
 
               {/* PRODUCT */}
               <div>
-
                 <label className="mb-2 block text-sm font-semibold text-slate-700">
                   Ürün
                 </label>
@@ -1079,51 +1216,65 @@ export default function StockPage() {
                       e.target.value
                     )
                   }
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 >
-
                   <option value="">
                     Ürün seçin...
                   </option>
 
-                  {products.map(
-                    (product) => (
-                      <option
-                        key={product.id}
-                        value={product.id}
-                      >
-                        {product.product_name}
-                        {product.barcode
-                          ? ` - ${product.barcode}`
-                          : ""}
-                      </option>
-                    )
-                  )}
-
+                  {products.map((product) => (
+                    <option
+                      key={product.id}
+                      value={product.id}
+                    >
+                      {product.product_name}
+                      {product.sku
+                        ? ` - ${product.sku}`
+                        : ""}
+                      {product.barcode
+                        ? ` - ${product.barcode}`
+                        : ""}
+                    </option>
+                  ))}
                 </select>
-
               </div>
 
               {/* CURRENT STOCK */}
               {selectedProduct && (
                 <div className="rounded-xl bg-slate-50 p-4">
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-4">
 
-                    <span className="text-sm text-slate-500">
-                      Mevcut Stok
-                    </span>
+                    <div>
+                      <p className="text-xs text-slate-400">
+                        Mevcut Stok
+                      </p>
 
-                    <span className="text-lg font-bold text-slate-900">
-                      {formatNumber(
-                        Number(
-                          selectedProduct.stock ||
-                            0
-                        )
-                      )}{" "}
-                      {selectedProduct.unit ||
-                        "Adet"}
-                    </span>
+                      <p className="mt-1 text-lg font-bold text-slate-900">
+                        {formatNumber(
+                          Number(
+                            selectedProduct.stock || 0
+                          )
+                        )}{" "}
+                        {selectedProduct.unit ||
+                          "Adet"}
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      <p className="text-xs text-slate-400">
+                        Min. Stok
+                      </p>
+
+                      <p className="mt-1 text-sm font-semibold text-slate-600">
+                        {formatNumber(
+                          Number(
+                            selectedProduct.min_stock ||
+                              0
+                          )
+                        )}
+                      </p>
+                    </div>
 
                   </div>
 
@@ -1132,19 +1283,17 @@ export default function StockPage() {
 
               {/* QUANTITY */}
               <div>
-
                 <label className="mb-2 block text-sm font-semibold text-slate-700">
-
                   {movementType === "count"
                     ? "Depodaki Gerçek Stok"
                     : "Miktar"}
-
                 </label>
 
                 <input
                   type="number"
                   min="0"
                   step="0.01"
+                  inputMode="decimal"
                   value={quantity}
                   onChange={(e) =>
                     setQuantity(
@@ -1153,32 +1302,42 @@ export default function StockPage() {
                   }
                   placeholder={
                     movementType === "count"
-                      ? "Örn: 87"
+                      ? "Örn: 87 veya 0"
                       : "Miktar"
                   }
-                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 />
 
+                {movementType === "count" && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    Sayımda 0 geçerli bir değerdir.
+                  </p>
+                )}
               </div>
 
               {/* PREVIEW */}
               {selectedProduct &&
-                quantity &&
+                quantity.trim() !== "" &&
+                Number.isFinite(enteredQuantity) &&
                 enteredQuantity >= 0 && (
-                  <div className="rounded-xl border border-slate-200 bg-white p-4">
-
-                    <div className="flex items-center justify-between">
+                  <div
+                    className={`rounded-xl border p-4 ${
+                      previewStock !== null &&
+                      previewStock < 0
+                        ? "border-red-200 bg-red-50"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
 
                       <div>
-
                         <p className="text-xs text-slate-400">
                           İşlem Sonrası Stok
                         </p>
 
                         <p
                           className={`mt-1 text-2xl font-bold ${
-                            previewStock !==
-                              null &&
+                            previewStock !== null &&
                             previewStock < 0
                               ? "text-red-600"
                               : "text-slate-900"
@@ -1192,21 +1351,25 @@ export default function StockPage() {
                           {selectedProduct.unit ||
                             "Adet"}
                         </p>
-
                       </div>
 
-                      <div className="text-3xl">
+                      <div className="text-2xl text-slate-300">
                         →
                       </div>
 
                     </div>
 
+                    {previewStock !== null &&
+                      previewStock < 0 && (
+                        <p className="mt-3 text-xs font-semibold text-red-600">
+                          Bu işlem stok miktarını negatife düşürüyor.
+                        </p>
+                      )}
                   </div>
                 )}
 
               {/* NOTE */}
               <div>
-
                 <label className="mb-2 block text-sm font-semibold text-slate-700">
                   Açıklama
                 </label>
@@ -1217,33 +1380,41 @@ export default function StockPage() {
                     setNote(e.target.value)
                   }
                   rows={3}
+                  maxLength={500}
                   placeholder={
                     movementType === "count"
                       ? "Örn: Depo sayımı"
                       : "Örn: İstoç alış, hasarlı ürün..."
                   }
-                  className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-slate-400"
+                  className="w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
                 />
 
+                <p className="mt-1 text-right text-xs text-slate-400">
+                  {note.length}/500
+                </p>
               </div>
 
             </div>
 
             {/* FOOTER */}
-            <div className="flex gap-3 border-t border-slate-200 px-6 py-5">
+            <div className="flex flex-col-reverse gap-3 border-t border-slate-200 px-6 py-5 sm:flex-row">
 
               <button
                 onClick={closeModal}
                 disabled={saving}
-                className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 Vazgeç
               </button>
 
               <button
                 onClick={saveMovement}
-                disabled={saving}
-                className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={
+                  saving ||
+                  !selectedProductId ||
+                  !isQuantityValid
+                }
+                className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving
                   ? "Kaydediliyor..."
@@ -1253,7 +1424,6 @@ export default function StockPage() {
             </div>
 
           </div>
-
         </div>
       )}
 
@@ -1264,10 +1434,9 @@ export default function StockPage() {
           <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
 
             {/* HEADER */}
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 sm:px-6 sm:py-5">
 
-              <div>
-
+              <div className="min-w-0">
                 <h2 className="text-xl font-bold text-slate-900">
                   📜 Stok Geçmişi
                 </h2>
@@ -1278,10 +1447,18 @@ export default function StockPage() {
                     {historyProduct.product_name}
                   </span>
 
+                  {historyProduct.sku && (
+                    <>
+                      <span>•</span>
+                      <span>
+                        SKU: {historyProduct.sku}
+                      </span>
+                    </>
+                  )}
+
                   {historyProduct.barcode && (
                     <>
                       <span>•</span>
-
                       <span>
                         {historyProduct.barcode}
                       </span>
@@ -1289,13 +1466,13 @@ export default function StockPage() {
                   )}
 
                 </div>
-
               </div>
 
               <button
                 onClick={closeStockHistory}
                 disabled={historyLoading}
-                className="rounded-lg px-3 py-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                className="ml-4 shrink-0 rounded-lg px-3 py-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                aria-label="Kapat"
               >
                 ✕
               </button>
@@ -1303,10 +1480,9 @@ export default function StockPage() {
             </div>
 
             {/* PRODUCT SUMMARY */}
-            <div className="grid grid-cols-1 gap-4 border-b border-slate-200 bg-slate-50 p-5 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 border-b border-slate-200 bg-slate-50 p-4 sm:grid-cols-3 sm:gap-4 sm:p-5">
 
               <div className="rounded-xl bg-white p-4">
-
                 <p className="text-xs text-slate-400">
                   Mevcut Stok
                 </p>
@@ -1320,11 +1496,9 @@ export default function StockPage() {
                   {historyProduct.unit ||
                     "Adet"}
                 </p>
-
               </div>
 
               <div className="rounded-xl bg-white p-4">
-
                 <p className="text-xs text-slate-400">
                   Toplam Hareket
                 </p>
@@ -1332,11 +1506,9 @@ export default function StockPage() {
                 <p className="mt-1 text-2xl font-bold text-slate-900">
                   {historyMovements.length}
                 </p>
-
               </div>
 
               <div className="rounded-xl bg-white p-4">
-
                 <p className="text-xs text-slate-400">
                   Minimum Stok
                 </p>
@@ -1351,7 +1523,6 @@ export default function StockPage() {
                   {historyProduct.unit ||
                     "Adet"}
                 </p>
-
               </div>
 
             </div>
@@ -1379,9 +1550,7 @@ export default function StockPage() {
                 <table className="w-full min-w-[900px] text-left text-sm">
 
                   <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
-
                     <tr>
-
                       <th className="px-5 py-3">
                         Tarih
                       </th>
@@ -1405,21 +1574,17 @@ export default function StockPage() {
                       <th className="px-5 py-3">
                         Açıklama
                       </th>
-
                     </tr>
-
                   </thead>
 
                   <tbody className="divide-y divide-slate-100">
 
                     {historyMovements.map(
                       (movement) => {
-
                         const orderNumber =
                           movement.reference_id
                             ? orderMap[
-                                movement
-                                  .reference_id
+                                movement.reference_id
                               ]
                             : undefined;
 
@@ -1428,7 +1593,6 @@ export default function StockPage() {
                             key={movement.id}
                             className="hover:bg-slate-50"
                           >
-
                             <td className="whitespace-nowrap px-5 py-4 text-slate-500">
                               {formatDate(
                                 movement.created_at
@@ -1436,27 +1600,18 @@ export default function StockPage() {
                             </td>
 
                             <td className="px-5 py-4">
-
                               <span className="font-semibold text-slate-700">
-
-                                {
-                                  movementIcons[
-                                    movement
-                                      .movement_type
-                                  ] || "•"
-                                }{" "}
-
-                                {
-                                  movementLabels[
-                                    movement
-                                      .movement_type
-                                  ] ||
-                                    movement
-                                      .movement_type
-                                }
-
+                                {movementIcons[
+                                  movement
+                                    .movement_type
+                                ] || "•"}{" "}
+                                {movementLabels[
+                                  movement
+                                    .movement_type
+                                ] ||
+                                  movement
+                                    .movement_type}
                               </span>
-
                             </td>
 
                             <td
@@ -1470,7 +1625,6 @@ export default function StockPage() {
                             </td>
 
                             <td className="px-5 py-4 text-slate-500">
-
                               {movement.stock_before ===
                               null
                                 ? "-"
@@ -1479,11 +1633,9 @@ export default function StockPage() {
                                       movement.stock_before
                                     )
                                   )}
-
                             </td>
 
                             <td className="px-5 py-4 font-bold text-slate-900">
-
                               {movement.stock_after ===
                               null
                                 ? "-"
@@ -1492,11 +1644,9 @@ export default function StockPage() {
                                       movement.stock_after
                                     )
                                   )}
-
                             </td>
 
                             <td className="px-5 py-4 text-slate-500">
-
                               {orderNumber ? (
                                 <Link
                                   href={`/siparis-gecmisi/${movement.reference_id}`}
@@ -1508,9 +1658,7 @@ export default function StockPage() {
                                 movement.note ||
                                 "-"
                               )}
-
                             </td>
-
                           </tr>
                         );
                       }
@@ -1524,12 +1672,12 @@ export default function StockPage() {
             </div>
 
             {/* FOOTER */}
-            <div className="flex justify-end border-t border-slate-200 bg-white px-6 py-4">
+            <div className="flex justify-end border-t border-slate-200 bg-white px-5 py-4 sm:px-6">
 
               <button
                 onClick={closeStockHistory}
                 disabled={historyLoading}
-                className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-xl border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 Kapat
               </button>
@@ -1540,7 +1688,6 @@ export default function StockPage() {
 
         </div>
       )}
-
     </main>
   );
 }

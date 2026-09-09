@@ -1,6 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import {
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
@@ -14,6 +19,7 @@ type Supplier = {
 type Product = {
   id: string;
   product_name: string;
+  sku: string | null;
   barcode: string | null;
   category: string | null;
   purchase_price: number;
@@ -25,6 +31,7 @@ type Product = {
 type CartItem = {
   product_id: string;
   product_name: string;
+  sku: string | null;
   barcode: string | null;
   quantity: number;
   unit_price: number;
@@ -37,7 +44,23 @@ function formatMoney(value: number) {
     style: "currency",
     currency: "TRY",
     maximumFractionDigits: 2,
-  }).format(value || 0);
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("tr-TR", {
+    maximumFractionDigits: 2,
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function getRpcErrorMessage(message: string) {
+  if (!message) {
+    return "İşlem sırasında bilinmeyen bir hata oluştu.";
+  }
+
+  return message
+    .replace(/^ERROR:\s*/i, "")
+    .trim();
 }
 
 function PurchasesPageContent() {
@@ -59,16 +82,35 @@ function PurchasesPageContent() {
   const [notes, setNotes] = useState("");
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  const [savedPurchaseId, setSavedPurchaseId] =
+    useState<string | null>(null);
 
   useEffect(() => {
     loadData();
   }, []);
 
-  async function loadData() {
-    setLoading(true);
+  useEffect(() => {
+    if (
+      preselectedSupplierId &&
+      preselectedSupplierId !== supplierId
+    ) {
+      setSupplierId(preselectedSupplierId);
+    }
+  }, [preselectedSupplierId]);
+
+  async function loadData(showRefreshing = false) {
+    if (showRefreshing) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     setError("");
 
     const [supplierResult, productResult] =
@@ -84,7 +126,7 @@ function PurchasesPageContent() {
         supabase
           .from("products")
           .select(
-            "id, product_name, barcode, category, purchase_price, stock, unit, is_active"
+            "id, product_name, sku, barcode, category, purchase_price, stock, unit, is_active"
           )
           .eq("is_active", true)
           .order("product_name"),
@@ -92,15 +134,29 @@ function PurchasesPageContent() {
 
     if (supplierResult.error) {
       console.error(supplierResult.error);
-      setError(supplierResult.error.message);
+
+      setError(
+        getRpcErrorMessage(
+          supplierResult.error.message
+        )
+      );
+
       setLoading(false);
+      setRefreshing(false);
       return;
     }
 
     if (productResult.error) {
       console.error(productResult.error);
-      setError(productResult.error.message);
+
+      setError(
+        getRpcErrorMessage(
+          productResult.error.message
+        )
+      );
+
       setLoading(false);
+      setRefreshing(false);
       return;
     }
 
@@ -113,6 +169,7 @@ function PurchasesPageContent() {
     );
 
     setLoading(false);
+    setRefreshing(false);
   }
 
   const selectedSupplier = suppliers.find(
@@ -132,6 +189,7 @@ function PurchasesPageContent() {
       .filter((product) => {
         return [
           product.product_name,
+          product.sku,
           product.barcode,
           product.category,
         ]
@@ -145,27 +203,45 @@ function PurchasesPageContent() {
       .slice(0, 20);
   }, [products, productSearch]);
 
-  const totalPurchase = cart.reduce(
-    (total, item) =>
-      total + item.quantity * item.unit_price,
-    0
-  );
+  const totalPurchase = useMemo(() => {
+    return cart.reduce(
+      (total, item) =>
+        total +
+        Number(item.quantity) *
+          Number(item.unit_price),
+      0
+    );
+  }, [cart]);
 
-  function addProduct(product: Product) {
+  const totalQuantity = useMemo(() => {
+    return cart.reduce(
+      (total, item) =>
+        total + Number(item.quantity),
+      0
+    );
+  }, [cart]);
+
+  function clearMessages() {
     setError("");
     setSuccess("");
+  }
+
+  function addProduct(product: Product) {
+    clearMessages();
+    setSavedPurchaseId(null);
 
     const existing = cart.find(
       (item) => item.product_id === product.id
     );
 
     if (existing) {
-      setCart(
-        cart.map((item) =>
+      setCart((currentCart) =>
+        currentCart.map((item) =>
           item.product_id === product.id
             ? {
                 ...item,
-                quantity: item.quantity + 1,
+                quantity:
+                  item.quantity + 1,
               }
             : item
         )
@@ -175,14 +251,16 @@ function PurchasesPageContent() {
       return;
     }
 
-    setCart([
-      ...cart,
+    setCart((currentCart) => [
+      ...currentCart,
       {
         product_id: product.id,
         product_name: product.product_name,
+        sku: product.sku,
         barcode: product.barcode,
         quantity: 1,
-        unit_price: Number(product.purchase_price) || 0,
+        unit_price:
+          Number(product.purchase_price) || 0,
         stock: Number(product.stock) || 0,
         unit: product.unit || "Adet",
       },
@@ -195,15 +273,35 @@ function PurchasesPageContent() {
     productId: string,
     value: string
   ) {
+    clearMessages();
+
+    if (value === "") {
+      setCart((currentCart) =>
+        currentCart.map((item) =>
+          item.product_id === productId
+            ? {
+                ...item,
+                quantity: 0,
+              }
+            : item
+        )
+      );
+
+      return;
+    }
+
     const quantity = Number(value);
 
-    setCart(
-      cart.map((item) =>
+    setCart((currentCart) =>
+      currentCart.map((item) =>
         item.product_id === productId
           ? {
               ...item,
               quantity:
-                quantity > 0 ? quantity : 1,
+                Number.isFinite(quantity) &&
+                quantity >= 0
+                  ? quantity
+                  : 0,
             }
           : item
       )
@@ -214,15 +312,35 @@ function PurchasesPageContent() {
     productId: string,
     value: string
   ) {
+    clearMessages();
+
+    if (value === "") {
+      setCart((currentCart) =>
+        currentCart.map((item) =>
+          item.product_id === productId
+            ? {
+                ...item,
+                unit_price: 0,
+              }
+            : item
+        )
+      );
+
+      return;
+    }
+
     const unitPrice = Number(value);
 
-    setCart(
-      cart.map((item) =>
+    setCart((currentCart) =>
+      currentCart.map((item) =>
         item.product_id === productId
           ? {
               ...item,
               unit_price:
-                unitPrice >= 0 ? unitPrice : 0,
+                Number.isFinite(unitPrice) &&
+                unitPrice >= 0
+                  ? unitPrice
+                  : 0,
             }
           : item
       )
@@ -230,59 +348,92 @@ function PurchasesPageContent() {
   }
 
   function removeProduct(productId: string) {
-    setCart(
-      cart.filter(
+    clearMessages();
+
+    setCart((currentCart) =>
+      currentCart.filter(
         (item) => item.product_id !== productId
       )
     );
   }
 
-  async function savePurchase() {
-    setError("");
-    setSuccess("");
-
+  function validatePurchase() {
     if (!supplierId) {
-      setError("Lütfen bir tedarikçi seç.");
-      return;
+      return "Lütfen bir tedarikçi seç.";
     }
 
     if (cart.length === 0) {
-      setError("Alışa en az bir ürün eklemelisin.");
-      return;
+      return "Alışa en az bir ürün eklemelisin.";
     }
 
     for (const item of cart) {
-      if (item.quantity <= 0) {
-        setError(
-          `${item.product_name} için miktar 0'dan büyük olmalıdır.`
-        );
-        return;
+      if (
+        !Number.isFinite(item.quantity) ||
+        item.quantity <= 0
+      ) {
+        return `${item.product_name} için miktar 0'dan büyük olmalıdır.`;
       }
 
-      if (item.unit_price < 0) {
-        setError(
-          `${item.product_name} için alış fiyatı negatif olamaz.`
-        );
-        return;
+      if (
+        !Number.isFinite(item.unit_price) ||
+        item.unit_price < 0
+      ) {
+        return `${item.product_name} için alış fiyatı negatif olamaz.`;
       }
+    }
+
+    if (
+      !Number.isFinite(totalPurchase) ||
+      totalPurchase < 0
+    ) {
+      return "Alış toplamı geçersiz.";
+    }
+
+    return null;
+  }
+
+  async function savePurchase() {
+    if (saving) {
+      return;
+    }
+
+    clearMessages();
+    setSavedPurchaseId(null);
+
+    const validationError =
+      validatePurchase();
+
+    if (validationError) {
+      setError(validationError);
+      return;
     }
 
     setSaving(true);
 
     const { data, error: purchaseError } =
-      await supabase.rpc("create_purchase_order", {
-        p_supplier_id: supplierId,
-        p_items: cart.map((item) => ({
-          product_id: item.product_id,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-        })),
-        p_notes: notes.trim() || null,
-      });
+      await supabase.rpc(
+        "create_purchase_order",
+        {
+          p_supplier_id: supplierId,
+          p_items: cart.map((item) => ({
+            product_id: item.product_id,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+          })),
+          p_notes:
+            notes.trim() || null,
+        }
+      );
 
     if (purchaseError) {
       console.error(purchaseError);
-      setError(purchaseError.message);
+
+      setError(
+        getRpcErrorMessage(
+          purchaseError.message
+        )
+      );
+
       setSaving(false);
       return;
     }
@@ -291,19 +442,26 @@ function PurchasesPageContent() {
       ? data[0]
       : data;
 
+    const purchaseId =
+      result?.result_purchase_id ??
+      result?.purchase_id ??
+      null;
+
     const purchaseNumber =
       result?.result_purchase_number ??
-      result?.purchase_number;
+      result?.purchase_number ??
+      "-";
 
-    const total =
-      Number(
-        result?.result_total ??
-          result?.total ??
-          totalPurchase
-      );
+    const total = Number(
+      result?.result_total ??
+        result?.total ??
+        totalPurchase
+    );
+
+    setSavedPurchaseId(purchaseId);
 
     setSuccess(
-      `Alış #${purchaseNumber ?? "-"} başarıyla kaydedildi. Toplam: ${formatMoney(
+      `Alış #${purchaseNumber} başarıyla kaydedildi. Toplam: ${formatMoney(
         total
       )}`
     );
@@ -313,14 +471,16 @@ function PurchasesPageContent() {
     setProductSearch("");
     setSaving(false);
 
-    await loadData();
+    await loadData(true);
   }
 
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-50 p-4 md:p-6">
-        <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-          Alış ekranı yükleniyor...
+        <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+          <div className="text-sm font-medium text-slate-500">
+            Alış ekranı yükleniyor...
+          </div>
         </div>
       </main>
     );
@@ -331,33 +491,54 @@ function PurchasesPageContent() {
       <div className="mx-auto max-w-7xl space-y-6">
 
         {/* HEADER */}
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <button
+              type="button"
               onClick={() =>
                 router.push("/tedarikciler")
               }
-              className="mb-3 text-sm font-semibold text-slate-500 hover:text-slate-900"
+              className="mb-3 text-sm font-semibold text-slate-500 transition hover:text-slate-900"
             >
               ← Tedarikçilere Dön
             </button>
 
-            <h1 className="text-2xl font-bold text-slate-900">
-              Yeni Alış
-            </h1>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                Yeni Alış
+              </h1>
+
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                Satın Alma
+              </span>
+            </div>
 
             <p className="mt-1 text-sm text-slate-500">
               Tedarikçiden aldığın ürünleri stoğa ekle
+              ve alış kaydını oluştur.
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
-            <div className="text-xs font-semibold text-slate-400">
-              Alış Toplamı
-            </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => loadData(true)}
+              disabled={refreshing || saving}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {refreshing
+                ? "Yenileniyor..."
+                : "↻ Yenile"}
+            </button>
 
-            <div className="mt-1 text-xl font-bold text-slate-900">
-              {formatMoney(totalPurchase)}
+            <div className="min-w-[190px] rounded-2xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
+              <div className="text-xs font-semibold text-slate-400">
+                Alış Toplamı
+              </div>
+
+              <div className="mt-1 text-xl font-bold text-slate-900">
+                {formatMoney(totalPurchase)}
+              </div>
             </div>
           </div>
         </div>
@@ -365,12 +546,24 @@ function PurchasesPageContent() {
         {/* ERROR */}
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <div className="font-bold">
-              İşlem gerçekleştirilemedi.
-            </div>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="font-bold">
+                  İşlem gerçekleştirilemedi.
+                </div>
 
-            <div className="mt-1">
-              {error}
+                <div className="mt-1">
+                  {error}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setError("")}
+                className="rounded-lg px-2 py-1 text-xs font-bold text-red-500 hover:bg-red-100"
+              >
+                Kapat
+              </button>
             </div>
           </div>
         )}
@@ -378,116 +571,234 @@ function PurchasesPageContent() {
         {/* SUCCESS */}
         {success && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
-            <div className="font-bold">
-              Alış başarıyla kaydedildi.
-            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="font-bold">
+                  Alış başarıyla kaydedildi.
+                </div>
 
-            <div className="mt-1">
-              {success}
+                <div className="mt-1">
+                  {success}
+                </div>
+              </div>
+
+              {savedPurchaseId && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/alislar/${savedPurchaseId}`
+                    )
+                  }
+                  className="shrink-0 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-800"
+                >
+                  Alış Detayını Gör →
+                </button>
+              )}
             </div>
           </div>
         )}
 
         {/* SUPPLIER */}
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3">
-            <h2 className="text-lg font-bold text-slate-900">
-              1. Tedarikçi Seç
-            </h2>
+          <div className="mb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                1
+              </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Bu alışın hangi tedarikçiden yapıldığını seç.
+              <h2 className="text-lg font-bold text-slate-900">
+                Tedarikçi Seç
+              </h2>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-500">
+              Bu alışın hangi tedarikçiden yapıldığını
+              seç.
             </p>
           </div>
 
-          <select
-            value={supplierId}
-            onChange={(e) => {
-              setSupplierId(e.target.value);
-              setError("");
-              setSuccess("");
-            }}
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-slate-500"
-          >
-            <option value="">
-              Tedarikçi seç...
-            </option>
+          {suppliers.length === 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <div className="font-bold text-amber-800">
+                Aktif tedarikçi bulunamadı.
+              </div>
 
-            {suppliers.map((supplier) => (
-              <option
-                key={supplier.id}
-                value={supplier.id}
+              <p className="mt-1 text-sm text-amber-700">
+                Alış oluşturabilmek için önce aktif bir
+                tedarikçi eklemelisin.
+              </p>
+
+              <button
+                type="button"
+                onClick={() =>
+                  router.push("/tedarikciler")
+                }
+                className="mt-3 rounded-xl bg-amber-700 px-4 py-2.5 text-xs font-bold text-white transition hover:bg-amber-800"
               >
-                {supplier.company_name}
-                {supplier.contact_name
-                  ? ` - ${supplier.contact_name}`
-                  : ""}
-              </option>
-            ))}
-          </select>
-
-          {selectedSupplier && (
-            <div className="mt-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
-              Seçilen tedarikçi:{" "}
-              <strong className="text-slate-900">
-                {selectedSupplier.company_name}
-              </strong>
+                Tedarikçilere Git →
+              </button>
             </div>
+          ) : (
+            <>
+              <select
+                value={supplierId}
+                onChange={(e) => {
+                  setSupplierId(e.target.value);
+                  clearMessages();
+                  setSavedPurchaseId(null);
+                }}
+                disabled={saving}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:bg-slate-50"
+              >
+                <option value="">
+                  Tedarikçi seç...
+                </option>
+
+                {suppliers.map((supplier) => (
+                  <option
+                    key={supplier.id}
+                    value={supplier.id}
+                  >
+                    {supplier.company_name}
+                    {supplier.contact_name
+                      ? ` - ${supplier.contact_name}`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+
+              {selectedSupplier && (
+                <div className="mt-3 flex items-center gap-3 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-700 shadow-sm">
+                    {selectedSupplier.company_name
+                      .charAt(0)
+                      .toUpperCase()}
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-slate-400">
+                      Seçilen tedarikçi
+                    </div>
+
+                    <strong className="text-slate-900">
+                      {selectedSupplier.company_name}
+                    </strong>
+
+                    {selectedSupplier.contact_name && (
+                      <span className="ml-2 text-slate-500">
+                        •{" "}
+                        {
+                          selectedSupplier.contact_name
+                        }
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
 
         {/* PRODUCT SEARCH */}
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-3">
-            <h2 className="text-lg font-bold text-slate-900">
-              2. Ürün Ekle
-            </h2>
+          <div className="mb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                2
+              </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Ürün adı, barkod veya kategori ile ara.
+              <h2 className="text-lg font-bold text-slate-900">
+                Ürün Ekle
+              </h2>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-500">
+              Ürün adı, SKU, barkod veya kategori ile
+              ara.
             </p>
           </div>
 
-          <input
-            value={productSearch}
-            onChange={(e) =>
-              setProductSearch(e.target.value)
-            }
-            placeholder="Ürün adı veya barkod ara..."
-            className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-500"
-          />
+          <div className="relative">
+            <input
+              value={productSearch}
+              onChange={(e) => {
+                setProductSearch(e.target.value);
+                clearMessages();
+              }}
+              disabled={saving}
+              placeholder="Ürün adı, SKU veya barkod ara..."
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 pr-10 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:cursor-not-allowed disabled:bg-slate-50"
+            />
+
+            {productSearch && (
+              <button
+                type="button"
+                onClick={() =>
+                  setProductSearch("")
+                }
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            )}
+          </div>
 
           <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-            {filteredProducts.length === 0 ? (
-              <div className="p-6 text-center text-sm text-slate-500">
-                Ürün bulunamadı.
+            {products.length === 0 ? (
+              <div className="p-8 text-center">
+                <div className="text-3xl">
+                  📦
+                </div>
+
+                <div className="mt-2 font-semibold text-slate-900">
+                  Aktif ürün bulunamadı
+                </div>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Önce ürünler bölümünden aktif bir ürün
+                  oluşturmalısın.
+                </p>
+              </div>
+            ) : filteredProducts.length === 0 ? (
+              <div className="p-8 text-center text-sm text-slate-500">
+                Aramana uygun ürün bulunamadı.
               </div>
             ) : (
-              <div className="max-h-[360px] overflow-y-auto">
+              <div className="max-h-[400px] overflow-y-auto">
                 {filteredProducts.map((product) => {
                   const alreadyAdded = cart.some(
                     (item) =>
-                      item.product_id === product.id
+                      item.product_id ===
+                      product.id
                   );
 
                   return (
                     <button
                       key={product.id}
                       type="button"
+                      disabled={saving}
                       onClick={() =>
                         addProduct(product)
                       }
-                      className="flex w-full items-center justify-between border-b border-slate-100 p-4 text-left transition last:border-0 hover:bg-slate-50"
+                      className="flex w-full flex-col gap-3 border-b border-slate-100 p-4 text-left transition last:border-0 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="min-w-0">
                         <div className="font-semibold text-slate-900">
                           {product.product_name}
                         </div>
 
-                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-400">
+                          {product.sku && (
+                            <span className="rounded-md bg-slate-100 px-2 py-1 font-medium text-slate-500">
+                              SKU: {product.sku}
+                            </span>
+                          )}
+
                           {product.barcode && (
                             <span>
-                              Barkod: {product.barcode}
+                              Barkod:{" "}
+                              {product.barcode}
                             </span>
                           )}
 
@@ -499,12 +810,16 @@ function PurchasesPageContent() {
 
                           <span>
                             Mevcut stok:{" "}
-                            {product.stock}
+                            {formatNumber(
+                              Number(product.stock)
+                            )}{" "}
+                            {product.unit ||
+                              "Adet"}
                           </span>
                         </div>
                       </div>
 
-                      <div className="ml-4 flex shrink-0 items-center gap-3">
+                      <div className="flex shrink-0 items-center justify-between gap-4 sm:justify-end">
                         <div className="text-right">
                           <div className="text-xs text-slate-400">
                             Son alış
@@ -527,7 +842,7 @@ function PurchasesPageContent() {
                           }
                         >
                           {alreadyAdded
-                            ? "Eklendi"
+                            ? "✓ Eklendi"
                             : "+ Ekle"}
                         </span>
                       </div>
@@ -537,18 +852,45 @@ function PurchasesPageContent() {
               </div>
             )}
           </div>
+
+          {filteredProducts.length === 20 && (
+            <div className="mt-3 text-center text-xs text-slate-400">
+              En fazla 20 sonuç gösteriliyor. Daha
+              kesin arama yapmak için ürün adı, SKU veya
+              barkod kullan.
+            </div>
+          )}
         </section>
 
         {/* CART */}
-        <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 p-5">
-            <h2 className="text-lg font-bold text-slate-900">
-              3. Alış Kalemleri
-            </h2>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                    3
+                  </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Miktar ve gerçek alış fiyatını kontrol et.
-            </p>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    Alış Kalemleri
+                  </h2>
+                </div>
+
+                <p className="mt-2 text-sm text-slate-500">
+                  Miktar ve gerçek alış fiyatını kontrol
+                  et.
+                </p>
+              </div>
+
+              {cart.length > 0 && (
+                <div className="rounded-xl bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-600">
+                  {cart.length} ürün •{" "}
+                  {formatNumber(totalQuantity)}{" "}
+                  toplam adet
+                </div>
+              )}
+            </div>
           </div>
 
           {cart.length === 0 ? (
@@ -562,67 +904,215 @@ function PurchasesPageContent() {
               </div>
 
               <div className="mt-1 text-sm text-slate-500">
-                Yukarıdaki ürün listesinden alışa ürün ekle.
+                Yukarıdaki ürün listesinden alışa ürün
+                ekle.
               </div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[900px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-400">
-                    <th className="px-5 py-4">
-                      Ürün
-                    </th>
+            <>
+              {/* DESKTOP TABLE */}
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[900px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+                      <th className="px-5 py-4">
+                        Ürün
+                      </th>
 
-                    <th className="px-5 py-4">
-                      Mevcut Stok
-                    </th>
+                      <th className="px-5 py-4">
+                        Mevcut Stok
+                      </th>
 
-                    <th className="px-5 py-4">
-                      Miktar
-                    </th>
+                      <th className="px-5 py-4">
+                        Miktar
+                      </th>
 
-                    <th className="px-5 py-4">
-                      Alış Fiyatı
-                    </th>
+                      <th className="px-5 py-4">
+                        Alış Fiyatı
+                      </th>
 
-                    <th className="px-5 py-4 text-right">
-                      Toplam
-                    </th>
+                      <th className="px-5 py-4 text-right">
+                        Toplam
+                      </th>
 
-                    <th className="px-5 py-4 text-center">
-                      İşlem
-                    </th>
-                  </tr>
-                </thead>
+                      <th className="px-5 py-4 text-center">
+                        İşlem
+                      </th>
+                    </tr>
+                  </thead>
 
-                <tbody>
-                  {cart.map((item) => (
-                    <tr
-                      key={item.product_id}
-                      className="border-b border-slate-100 last:border-0"
-                    >
-                      <td className="px-5 py-4">
+                  <tbody>
+                    {cart.map((item) => (
+                      <tr
+                        key={item.product_id}
+                        className="border-b border-slate-100 last:border-0"
+                      >
+                        <td className="px-5 py-4">
+                          <div className="font-semibold text-slate-900">
+                            {item.product_name}
+                          </div>
+
+                          <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                            {item.sku && (
+                              <span>
+                                SKU: {item.sku}
+                              </span>
+                            )}
+
+                            {item.barcode && (
+                              <span>
+                                Barkod:{" "}
+                                {item.barcode}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4 text-slate-600">
+                          {formatNumber(
+                            item.stock
+                          )}{" "}
+                          {item.unit}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            inputMode="decimal"
+                            value={item.quantity}
+                            onChange={(e) =>
+                              updateQuantity(
+                                item.product_id,
+                                e.target.value
+                              )
+                            }
+                            disabled={saving}
+                            className="w-28 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:bg-slate-50"
+                          />
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <div className="relative w-36">
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              inputMode="decimal"
+                              value={
+                                item.unit_price
+                              }
+                              onChange={(e) =>
+                                updateUnitPrice(
+                                  item.product_id,
+                                  e.target.value
+                                )
+                              }
+                              disabled={saving}
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 pr-10 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:bg-slate-50"
+                            />
+
+                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
+                              ₺
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4 text-right font-bold text-slate-900">
+                          {formatMoney(
+                            item.quantity *
+                              item.unit_price
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeProduct(
+                                item.product_id
+                              )
+                            }
+                            disabled={saving}
+                            className="rounded-lg px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                          >
+                            Kaldır
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* MOBILE CARDS */}
+              <div className="divide-y divide-slate-100 md:hidden">
+                {cart.map((item) => (
+                  <div
+                    key={item.product_id}
+                    className="p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <div className="font-semibold text-slate-900">
                           {item.product_name}
                         </div>
 
-                        {item.barcode && (
-                          <div className="mt-1 text-xs text-slate-400">
-                            Barkod: {item.barcode}
-                          </div>
-                        )}
-                      </td>
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-400">
+                          {item.sku && (
+                            <span>
+                              SKU: {item.sku}
+                            </span>
+                          )}
 
-                      <td className="px-5 py-4 text-slate-600">
-                        {item.stock} {item.unit}
-                      </td>
+                          {item.barcode && (
+                            <span>
+                              Barkod:{" "}
+                              {item.barcode}
+                            </span>
+                          )}
+                        </div>
+                      </div>
 
-                      <td className="px-5 py-4">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeProduct(
+                            item.product_id
+                          )
+                        }
+                        disabled={saving}
+                        className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        Kaldır
+                      </button>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-400">
+                          Mevcut Stok
+                        </label>
+
+                        <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-700">
+                          {formatNumber(
+                            item.stock
+                          )}{" "}
+                          {item.unit}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-400">
+                          Miktar
+                        </label>
+
                         <input
                           type="number"
-                          min="0.01"
+                          min="0"
                           step="0.01"
+                          inputMode="decimal"
                           value={item.quantity}
                           onChange={(e) =>
                             updateQuantity(
@@ -630,89 +1120,115 @@ function PurchasesPageContent() {
                               e.target.value
                             )
                           }
-                          className="w-28 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                          disabled={saving}
+                          className="w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-slate-500 disabled:bg-slate-50"
                         />
-                      </td>
+                      </div>
 
-                      <td className="px-5 py-4">
-                        <div className="relative w-36">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-400">
+                          Alış Fiyatı
+                        </label>
+
+                        <div className="relative">
                           <input
                             type="number"
                             min="0"
                             step="0.01"
-                            value={item.unit_price}
+                            inputMode="decimal"
+                            value={
+                              item.unit_price
+                            }
                             onChange={(e) =>
                               updateUnitPrice(
                                 item.product_id,
                                 e.target.value
                               )
                             }
-                            className="w-full rounded-xl border border-slate-300 px-3 py-2 pr-10 text-sm outline-none focus:border-slate-500"
+                            disabled={saving}
+                            className="w-full rounded-xl border border-slate-300 px-3 py-2.5 pr-9 text-sm outline-none focus:border-slate-500 disabled:bg-slate-50"
                           />
 
                           <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">
                             ₺
                           </span>
                         </div>
-                      </td>
+                      </div>
 
-                      <td className="px-5 py-4 text-right font-bold text-slate-900">
-                        {formatMoney(
-                          item.quantity *
-                            item.unit_price
-                        )}
-                      </td>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-slate-400">
+                          Kalem Toplamı
+                        </label>
 
-                      <td className="px-5 py-4 text-center">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            removeProduct(
-                              item.product_id
-                            )
-                          }
-                          className="rounded-lg px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
-                        >
-                          Kaldır
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-900">
+                          {formatMoney(
+                            item.quantity *
+                              item.unit_price
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </section>
 
         {/* NOTES + TOTAL */}
         <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
-            <h2 className="text-lg font-bold text-slate-900">
-              4. Alış Notu
-            </h2>
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                4
+              </div>
 
-            <p className="mt-1 text-sm text-slate-500">
-              İstersen bu alışla ilgili açıklama ekleyebilirsin.
+              <h2 className="text-lg font-bold text-slate-900">
+                Alış Notu
+              </h2>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-500">
+              İstersen bu alışla ilgili açıklama
+              ekleyebilirsin.
             </p>
 
             <textarea
               value={notes}
-              onChange={(e) =>
-                setNotes(e.target.value)
-              }
-              rows={5}
+              onChange={(e) => {
+                setNotes(e.target.value);
+                clearMessages();
+              }}
+              disabled={saving}
+              maxLength={500}
+              rows={6}
               placeholder="Örn: İstoç deposundan alınan ürünler..."
-              className="mt-4 w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-500"
+              className="mt-4 w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-100 disabled:bg-slate-50"
             />
+
+            <div className="mt-2 text-right text-xs text-slate-400">
+              {notes.length}/500
+            </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="text-sm text-slate-500">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-6 lg:self-start">
+            <div className="text-sm font-semibold text-slate-500">
               Alış Özeti
             </div>
 
             <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-slate-500">
+                  Tedarikçi
+                </span>
+
+                <span className="max-w-[180px] truncate text-right font-semibold text-slate-900">
+                  {selectedSupplier
+                    ? selectedSupplier.company_name
+                    : "-"}
+                </span>
+              </div>
+
               <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-500">
                   Ürün çeşidi
@@ -725,24 +1241,22 @@ function PurchasesPageContent() {
 
               <div className="flex items-center justify-between text-sm">
                 <span className="text-slate-500">
-                  Toplam adet
+                  Toplam miktar
                 </span>
 
                 <span className="font-semibold text-slate-900">
-                  {cart.reduce(
-                    (total, item) =>
-                      total + item.quantity,
-                    0
+                  {formatNumber(
+                    totalQuantity
                   )}
                 </span>
               </div>
 
-              <div className="border-t border-slate-200 pt-3">
-                <div className="text-xs text-slate-400">
+              <div className="border-t border-slate-200 pt-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Toplam Alış
                 </div>
 
-                <div className="mt-1 text-2xl font-bold text-slate-900">
+                <div className="mt-1 text-2xl font-bold tracking-tight text-slate-900">
                   {formatMoney(totalPurchase)}
                 </div>
               </div>
@@ -756,16 +1270,27 @@ function PurchasesPageContent() {
                 !supplierId ||
                 cart.length === 0
               }
-              className="mt-5 w-full rounded-xl bg-slate-900 px-5 py-3.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-6 w-full rounded-xl bg-slate-900 px-5 py-3.5 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {saving
                 ? "Alış Kaydediliyor..."
                 : "Alışı Kaydet"}
             </button>
+
+            {!supplierId && (
+              <p className="mt-3 text-center text-xs text-slate-400">
+                Önce tedarikçi seçmelisin.
+              </p>
+            )}
+
+            {supplierId &&
+              cart.length === 0 && (
+                <p className="mt-3 text-center text-xs text-slate-400">
+                  Alışa en az bir ürün eklemelisin.
+                </p>
+              )}
           </div>
-
         </section>
-
       </div>
     </main>
   );
@@ -776,8 +1301,10 @@ export default function PurchasesPage() {
     <Suspense
       fallback={
         <main className="min-h-screen bg-slate-50 p-4 md:p-6">
-          <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-            Alış ekranı yükleniyor...
+          <div className="mx-auto max-w-7xl rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+            <div className="text-sm font-medium text-slate-500">
+              Alış ekranı yükleniyor...
+            </div>
           </div>
         </main>
       }

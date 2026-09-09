@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,11 +5,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 
+type OrderStatus =
+  | "new"
+  | "preparing"
+  | "shipped"
+  | "completed"
+  | "cancelled";
+
 type Order = {
   id: string;
   order_number: number;
   customer_id: string;
-  status: string;
+  status: OrderStatus;
   subtotal: number;
   total: number;
   notes: string | null;
@@ -37,7 +43,7 @@ type OrderItem = {
 };
 
 type StatusOption = {
-  value: string;
+  value: OrderStatus;
   label: string;
   icon: string;
 };
@@ -70,9 +76,15 @@ const STATUS_OPTIONS: StatusOption[] = [
   },
 ];
 
+const NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
+  new: "preparing",
+  preparing: "shipped",
+  shipped: "completed",
+};
+
 export default function OrderDetailPage() {
-  const params = useParams();
-  const orderId = params.id as string;
+  const params = useParams<{ id: string }>();
+  const orderId = params.id;
 
   const [order, setOrder] = useState<Order | null>(null);
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -82,60 +94,97 @@ export default function OrderDetailPage() {
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
   useEffect(() => {
-    if (orderId) {
-      loadOrder();
+    if (!orderId) {
+      return;
     }
+
+    void loadOrder();
   }, [orderId]);
 
   async function loadOrder() {
     setLoading(true);
 
-    const { data: orderData, error: orderError } = await supabase
-      .from("orders")
-      .select("*")
-      .eq("id", orderId)
-      .single();
+    try {
+      const {
+        data: orderData,
+        error: orderError,
+      } = await supabase
+        .from("orders")
+        .select(
+          "id, order_number, customer_id, status, subtotal, total, notes, created_at"
+        )
+        .eq("id", orderId)
+        .single();
 
-    if (orderError) {
-      console.error(orderError);
-      alert("Sipariş bulunamadı.");
-      setLoading(false);
-      return;
-    }
+      if (orderError) {
+        console.error("Sipariş yükleme hatası:", orderError);
+        alert(`Sipariş bulunamadı.\n\n${orderError.message}`);
+        return;
+      }
 
-    setOrder(orderData);
+      if (!orderData) {
+        alert("Sipariş bulunamadı.");
+        return;
+      }
 
-    const { data: customerData, error: customerError } =
-      await supabase
+      const typedOrder = orderData as Order;
+
+      setOrder(typedOrder);
+
+      const {
+        data: customerData,
+        error: customerError,
+      } = await supabase
         .from("customers")
         .select(
           "company_name, contact_name, phone, city, district, address"
         )
-        .eq("id", orderData.customer_id)
+        .eq("id", typedOrder.customer_id)
         .single();
 
-    if (customerError) {
-      console.error(customerError);
+      if (customerError) {
+        console.error(
+          "Müşteri bilgisi yükleme hatası:",
+          customerError
+        );
+      }
+
+      setCustomer(customerData as Customer | null);
+
+      const {
+        data: itemsData,
+        error: itemsError,
+      } = await supabase
+        .from("order_items")
+        .select(
+          "id, product_id, product_name, barcode, quantity, unit_price, total_price"
+        )
+        .eq("order_id", orderId)
+        .order("created_at", {
+          ascending: true,
+        });
+
+      if (itemsError) {
+        console.error(
+          "Sipariş ürünleri yükleme hatası:",
+          itemsError
+        );
+
+        alert(
+          `Sipariş ürünleri yüklenemedi.\n\n${itemsError.message}`
+        );
+
+        setItems([]);
+      } else {
+        setItems((itemsData || []) as OrderItem[]);
+      }
+    } catch (error) {
+      console.error("Sipariş detayında beklenmeyen hata:", error);
+
+      alert("Sipariş detayları yüklenirken beklenmeyen bir hata oluştu.");
+    } finally {
+      setLoading(false);
     }
-
-    setCustomer(customerData);
-
-    const { data: itemsData, error: itemsError } = await supabase
-      .from("order_items")
-      .select("*")
-      .eq("order_id", orderId)
-      .order("created_at", {
-        ascending: true,
-      });
-
-    if (itemsError) {
-      console.error(itemsError);
-      alert("Sipariş ürünleri yüklenemedi.");
-    }
-
-    setItems(itemsData || []);
-
-    setLoading(false);
   }
 
   async function cancelOrder() {
@@ -162,36 +211,51 @@ export default function OrderDetailPage() {
 
     setUpdatingStatus(true);
 
-    const { error } = await supabase.rpc("cancel_order", {
-      p_order_id: order.id,
-    });
+    try {
+      const { error } = await supabase.rpc("cancel_order", {
+        p_order_id: order.id,
+      });
 
-    if (error) {
-      console.error(error);
+      if (error) {
+        console.error("Sipariş iptal hatası:", error);
 
-      setUpdatingStatus(false);
+        alert(
+          `Sipariş iptal edilemedi.\n\n${error.message}`
+        );
+
+        return;
+      }
+
+      setOrder((currentOrder) => {
+        if (!currentOrder) {
+          return currentOrder;
+        }
+
+        return {
+          ...currentOrder,
+          status: "cancelled",
+        };
+      });
 
       alert(
-        `Sipariş iptal edilemedi.\n\n${error.message}`
+        `Sipariş #${order.order_number} başarıyla iptal edildi.\n\n` +
+          "Stok geri eklendi ve cari kayıt geri alındı."
+      );
+    } catch (error) {
+      console.error(
+        "Sipariş iptalinde beklenmeyen hata:",
+        error
       );
 
-      return;
+      alert(
+        "Sipariş iptal edilirken beklenmeyen bir hata oluştu."
+      );
+    } finally {
+      setUpdatingStatus(false);
     }
-
-    setOrder({
-      ...order,
-      status: "cancelled",
-    });
-
-    setUpdatingStatus(false);
-
-    alert(
-      `Sipariş #${order.order_number} başarıyla iptal edildi.\n\n` +
-        "Stok geri eklendi ve cari kayıt geri alındı."
-    );
   }
 
-  async function updateStatus(newStatus: string) {
+  async function updateStatus(newStatus: OrderStatus) {
     if (!order) {
       return;
     }
@@ -213,35 +277,73 @@ export default function OrderDetailPage() {
       return;
     }
 
-    setUpdatingStatus(true);
+    const expectedNextStatus = NEXT_STATUS[order.status];
 
-    const { error } = await supabase.rpc(
-  "update_order_status",
-  {
-    p_order_id: order.id,
-    p_new_status: newStatus,
-  }
-);
-
-    setUpdatingStatus(false);
-
-    if (error) {
-      console.error(error);
-
-      alert(
-        `Sipariş durumu güncellenemedi.\n\n${error.message}`
-      );
+    if (newStatus !== expectedNextStatus) {
+      if (expectedNextStatus) {
+        alert(
+          `Bu sipariş için sıradaki durum "${getStatusText(
+            expectedNextStatus
+          )}" olmalıdır.`
+        );
+      } else {
+        alert(
+          "Bu sipariş için başka bir aktif durum bulunmuyor."
+        );
+      }
 
       return;
     }
 
-    setOrder({
-      ...order,
-      status: newStatus,
-    });
+    setUpdatingStatus(true);
+
+    try {
+      const { error } = await supabase.rpc(
+        "update_order_status",
+        {
+          p_order_id: order.id,
+          p_new_status: newStatus,
+        }
+      );
+
+      if (error) {
+        console.error(
+          "Sipariş durumu güncelleme hatası:",
+          error
+        );
+
+        alert(
+          `Sipariş durumu güncellenemedi.\n\n${error.message}`
+        );
+
+        return;
+      }
+
+      setOrder((currentOrder) => {
+        if (!currentOrder) {
+          return currentOrder;
+        }
+
+        return {
+          ...currentOrder,
+          status: newStatus,
+        };
+      });
+    } catch (error) {
+      console.error(
+        "Sipariş durumu güncellemesinde beklenmeyen hata:",
+        error
+      );
+
+      alert(
+        "Sipariş durumu güncellenirken beklenmeyen bir hata oluştu."
+      );
+    } finally {
+      setUpdatingStatus(false);
+    }
   }
 
-  function formatPrice(value: number) {
+  function formatPrice(value: number | null | undefined) {
     return Number(value || 0).toLocaleString("tr-TR", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -258,7 +360,7 @@ export default function OrderDetailPage() {
     });
   }
 
-  function getStatusText(status: string) {
+  function getStatusText(status: OrderStatus) {
     switch (status) {
       case "new":
         return "Yeni";
@@ -280,7 +382,7 @@ export default function OrderDetailPage() {
     }
   }
 
-  function getStatusClass(status: string) {
+  function getStatusClass(status: OrderStatus) {
     switch (status) {
       case "new":
         return "bg-blue-100 text-blue-700";
@@ -300,6 +402,63 @@ export default function OrderDetailPage() {
       default:
         return "bg-slate-100 text-slate-700";
     }
+  }
+
+  function isStatusButtonDisabled(
+    status: StatusOption
+  ) {
+    if (!order) {
+      return true;
+    }
+
+    if (updatingStatus) {
+      return true;
+    }
+
+    if (order.status === "cancelled") {
+      return true;
+    }
+
+    if (status.value === order.status) {
+      return true;
+    }
+
+    if (status.value === "cancelled") {
+      return false;
+    }
+
+    return NEXT_STATUS[order.status] !== status.value;
+  }
+
+  function getStatusButtonClass(
+    status: StatusOption
+  ) {
+    if (!order) {
+      return "";
+    }
+
+    const isCurrent = order.status === status.value;
+    const isCancelled = order.status === "cancelled";
+    const isNext =
+      NEXT_STATUS[order.status] === status.value;
+
+    if (isCurrent) {
+      return "border-slate-900 bg-slate-900 text-white";
+    }
+
+    if (isCancelled) {
+      return "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400";
+    }
+
+    if (status.value === "cancelled") {
+      return "border-red-200 bg-white text-red-600 hover:bg-red-50";
+    }
+
+    if (isNext) {
+      return "border-slate-300 bg-white text-slate-700 hover:border-slate-900 hover:bg-slate-50";
+    }
+
+    return "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400";
   }
 
   if (loading) {
@@ -337,7 +496,6 @@ export default function OrderDetailPage() {
 
         {/* ÜST BAŞLIK */}
         <div className="mb-8 flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-
           <div>
             <Link
               href="/siparis-gecmisi"
@@ -371,42 +529,30 @@ export default function OrderDetailPage() {
               </span>
             )}
           </div>
-
         </div>
 
         {/* SİPARİŞ DURUMU */}
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
           <h2 className="mb-5 text-lg font-bold text-slate-900">
             Sipariş Durumu
           </h2>
 
           <div className="grid gap-3 md:grid-cols-5">
-
             {STATUS_OPTIONS.map((status) => {
-              const isCurrent =
-                order.status === status.value;
-
               const disabled =
-                updatingStatus ||
-                isCancelled ||
-                isCurrent;
+                isStatusButtonDisabled(status);
 
               return (
                 <button
                   key={status.value}
                   type="button"
                   onClick={() =>
-                    updateStatus(status.value)
+                    void updateStatus(status.value)
                   }
                   disabled={disabled}
-                  className={`rounded-xl border p-4 text-center transition ${
-                    isCurrent
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : isCancelled
-                      ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  } disabled:opacity-70`}
+                  className={`rounded-xl border p-4 text-center transition ${getStatusButtonClass(
+                    status
+                  )} disabled:opacity-70`}
                 >
                   <div className="text-xl">
                     {status.icon}
@@ -418,8 +564,25 @@ export default function OrderDetailPage() {
                 </button>
               );
             })}
-
           </div>
+
+          {/* DURUM BİLGİSİ */}
+          {!isCancelled && (
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+              {NEXT_STATUS[order.status] ? (
+                <>
+                  Sıradaki durum:{" "}
+                  <strong className="text-slate-900">
+                    {getStatusText(
+                      NEXT_STATUS[order.status]!
+                    )}
+                  </strong>
+                </>
+              ) : (
+                "Bu sipariş tamamlanmıştır."
+              )}
+            </div>
+          )}
 
           {/* İPTAL UYARISI */}
           {isCancelled && (
@@ -439,12 +602,10 @@ export default function OrderDetailPage() {
               getirilemez.
             </div>
           )}
-
         </div>
 
         {/* MÜŞTERİ BİLGİLERİ */}
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-
           <h2 className="mb-5 text-lg font-bold text-slate-900">
             Müşteri Bilgileri
           </h2>
@@ -521,14 +682,12 @@ export default function OrderDetailPage() {
                   </p>
                 </div>
               )}
-
             </div>
           ) : (
             <p className="text-sm text-slate-500">
               Müşteri bilgisi bulunamadı.
             </p>
           )}
-
         </div>
 
         {/* ÜRÜNLER */}
@@ -546,12 +705,10 @@ export default function OrderDetailPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-
               <table className="w-full">
 
                 <thead className="bg-slate-50">
                   <tr>
-
                     <th className="px-6 py-4 text-left text-sm font-semibold text-slate-500">
                       Ürün
                     </th>
@@ -567,17 +724,14 @@ export default function OrderDetailPage() {
                     <th className="px-6 py-4 text-right text-sm font-semibold text-slate-500">
                       Toplam
                     </th>
-
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-
                   {items.map((item) => (
                     <tr key={item.id}>
 
                       <td className="px-6 py-5">
-
                         <div className="font-semibold text-slate-900">
                           {item.product_name}
                         </div>
@@ -587,7 +741,6 @@ export default function OrderDetailPage() {
                             Barkod: {item.barcode}
                           </div>
                         )}
-
                       </td>
 
                       <td className="px-6 py-5 text-right">
@@ -610,22 +763,18 @@ export default function OrderDetailPage() {
 
                     </tr>
                   ))}
-
                 </tbody>
 
               </table>
-
             </div>
           )}
 
           {/* TOPLAM */}
           <div className="border-t border-slate-200 p-6">
-
             <div className="ml-auto max-w-sm space-y-3">
 
               {/* ARA TOPLAM */}
               <div className="flex justify-between text-sm">
-
                 <span className="text-slate-500">
                   Ara Toplam
                 </span>
@@ -636,12 +785,10 @@ export default function OrderDetailPage() {
                   )}{" "}
                   ₺
                 </span>
-
               </div>
 
               {/* GENEL TOPLAM */}
               <div className="flex justify-between border-t border-slate-200 pt-3">
-
                 <span className="text-lg font-bold text-slate-900">
                   Genel Toplam
                 </span>
@@ -652,17 +799,13 @@ export default function OrderDetailPage() {
                   )}{" "}
                   ₺
                 </span>
-
               </div>
 
             </div>
-
           </div>
 
         </div>
-
       </div>
     </div>
   );
 }
-
