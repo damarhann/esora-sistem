@@ -34,7 +34,7 @@ export default function SistemYonetimiPage() {
     }
 
     setMessage(
-      "Sistem başarıyla sıfırlandı. Ürünler, müşteriler ve tedarikçiler korunmuştur."
+      "Sistem başarıyla sıfırlandı. Tüm işletme verileri temizlendi. Yönetici hesabı korunmuştur."
     );
 
     setConfirmation("");
@@ -51,6 +51,7 @@ export default function SistemYonetimiPage() {
           <h1 className="text-3xl font-bold text-gray-900">
             Sistem Yönetimi
           </h1>
+
           <p className="mt-2 text-sm text-gray-500">
             Yalnızca yönetici tarafından kullanılabilen sistem işlemleri.
           </p>
@@ -75,33 +76,37 @@ export default function SistemYonetimiPage() {
             </h2>
 
             <p className="mt-2 text-sm leading-6 text-gray-600">
-              Bu işlem sipariş, alış, cari hareket, kasa/banka hareketleri ve
-              stok hareketlerini temizler.
+              Bu işlem sistemdeki tüm işletme verilerini kalıcı olarak siler.
+              İşlem geri alınamaz.
             </p>
           </div>
 
           <div className="rounded-xl bg-red-50 p-5">
             <h3 className="font-semibold text-red-800">
-              Sistem verilerini sıfırla
+              Tüm sistem verilerini sıfırla
             </h3>
 
             <ul className="mt-3 space-y-1 text-sm text-red-700">
+              <li>• Müşteriler silinir.</li>
+              <li>• Ürünler silinir.</li>
+              <li>• Tedarikçiler silinir.</li>
               <li>• Siparişler silinir.</li>
               <li>• Alış siparişleri silinir.</li>
               <li>• Cari hareketler silinir.</li>
+              <li>• Tedarikçi hareketleri silinir.</li>
               <li>• Kasa ve banka hareketleri silinir.</li>
               <li>• Stok hareketleri silinir.</li>
-              <li>• Ürün stokları 0 yapılır.</li>
-              <li>• Kasa ve banka bakiyeleri 0 yapılır.</li>
-              <li>• Sipariş numarası 1'den başlatılır.</li>
-              <li>• Alış sipariş numarası 1'den başlatılır.</li>
+              <li>• Kasa bakiyeleri 0 yapılır.</li>
+              <li>• Banka bakiyeleri 0 yapılır.</li>
+              <li>• Sipariş numarası yeniden 1'den başlar.</li>
+              <li>• Alış sipariş numarası yeniden 1'den başlar.</li>
             </ul>
 
             <div className="mt-4 rounded-lg bg-white p-4 text-sm text-gray-700">
-              <strong>Korunacaklar:</strong>
+              <strong>Korunacak tek hesap:</strong>
               <br />
-              Müşteriler, ürünler, tedarikçiler, kullanıcı hesabı ve sistem
-              ayarları silinmez.
+              Yönetici kullanıcı hesabı ve yönetici profili korunur. Böylece
+              sıfırlama işleminden sonra sisteme tekrar giriş yapabilirsiniz.
             </div>
 
             {!showConfirm ? (
@@ -119,7 +124,12 @@ export default function SistemYonetimiPage() {
             ) : (
               <div className="mt-6 rounded-xl border border-red-300 bg-white p-5">
                 <p className="text-sm font-semibold text-gray-800">
-                  Bu işlem geri alınamaz.
+                  DİKKAT: Bu işlem geri alınamaz.
+                </p>
+
+                <p className="mt-2 text-sm text-gray-600">
+                  Müşteriler, ürünler, tedarikçiler ve tüm işletme kayıtları
+                  kalıcı olarak silinecektir.
                 </p>
 
                 <p className="mt-2 text-sm text-gray-600">
@@ -156,7 +166,9 @@ export default function SistemYonetimiPage() {
                     disabled={loading || confirmation !== "SIFIRLA"}
                     className="rounded-xl bg-red-600 px-5 py-3 text-sm font-bold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {loading ? "SIFIRLANIYOR..." : "EVET, SİSTEMİ SIFIRLA"}
+                    {loading
+                      ? "SIFIRLANIYOR..."
+                      : "EVET, SİSTEMİ SIFIRLA"}
                   </button>
                 </div>
               </div>
