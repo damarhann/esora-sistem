@@ -30,6 +30,7 @@ type Product = {
   retail_price: number | null;
   stock: number | null;
   unit: string | null;
+  dealer_price: number | null;
 };
 
 type CartItem = {
@@ -287,8 +288,8 @@ export default function OrdersPage() {
     const { data, error } = await supabase
       .from("products")
       .select(
-        "id, product_name, barcode, purchase_price, wholesale_price, retail_price, stock, unit"
-      )
+  "id, product_name, barcode, purchase_price, wholesale_price, retail_price, dealer_price, stock, unit"
+)
       .eq("is_active", true)
       .order("product_name");
 
@@ -442,28 +443,51 @@ export default function OrdersPage() {
     return "Perakende";
   }
 
-  function getDefaultSalePrice(
-    product: Product
-  ) {
-    if (isWholesaleCustomer()) {
-      return Number(
-        product.wholesale_price ??
-          product.retail_price ??
-          0
-      );
-    }
+ function getDefaultSalePrice(product: Product) {
+  const type = getSelectedCustomerType();
 
+  if (type === "bayi" || type === "dealer") {
     return Number(
-      product.retail_price ?? 0
+      product.dealer_price ??
+        product.retail_price ??
+        0
     );
   }
 
-  function getDefaultPriceLabel() {
-    return isWholesaleCustomer()
-      ? "Toptan Satış Fiyatı"
-      : "Perakende Satış Fiyatı";
+  if (
+    type === "toptan" ||
+    type === "wholesale" ||
+    type === "wholesaler"
+  ) {
+    return Number(
+      product.wholesale_price ??
+        product.retail_price ??
+        0
+    );
   }
 
+  return Number(
+    product.retail_price ?? 0
+  );
+}
+
+function getDefaultPriceLabel() {
+  const type = getSelectedCustomerType();
+
+  if (type === "bayi" || type === "dealer") {
+    return "Bayi Satış Fiyatı";
+  }
+
+  if (
+    type === "toptan" ||
+    type === "wholesale" ||
+    type === "wholesaler"
+  ) {
+    return "Toptan Satış Fiyatı";
+  }
+
+  return "Perakende Satış Fiyatı";
+}
   /* =========================================================
      ORDER STATS
   ========================================================= */

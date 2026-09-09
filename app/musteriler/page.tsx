@@ -50,13 +50,9 @@ type CustomerForm = {
 };
 
 const CUSTOMER_TYPES = [
-  "Nalbur",
-  "Yapı Market",
-  "Tesisatçı",
-  "Banyo & Mutfak",
-  "Toptancı",
+  "Perakende",
+  "Toptan",
   "Bayi",
-  "Diğer",
 ];
 
 const PAYMENT_METHODS = [
@@ -102,7 +98,7 @@ function createEmptyForm(): CustomerForm {
     paymentTerm: "0",
     creditLimit: "0",
     notes: "",
-    customerType: "Nalbur",
+    customerType: "Toptan",
   };
 }
 
